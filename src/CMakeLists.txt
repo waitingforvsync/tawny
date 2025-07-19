@@ -32,6 +32,7 @@ target_link_libraries("tawny" PRIVATE "m")
 
 add_subdirectory("app")
 add_subdirectory("base")
+add_subdirectory("components")
 add_subdirectory("math")
 add_subdirectory("templates")
 target_sources("tawny" PRIVATE "main.c")
