@@ -25,7 +25,11 @@ Named after the tawny owl — the BBC Micro logo is a stylised owl made from dot
 - `src/emulator.rs` + `src/emulator/` — Emulation core
   - `component.rs` — `Component` trait (tick-driven, typed Input/Output pins)
   - `clock.rs` — 4 MHz master clock, phase tracking, frequency divider helpers
-  - `mos6502.rs` — MOS 6502 CPU (placeholder)
+  - `mos6502.rs` + `mos6502/` — MOS 6502 CPU (cycle-accurate, passes Dormann test)
+    - `flags.rs` — Processor status flag bit constants
+    - `ops.rs` — ALU/register operations with const generic dispatch
+    - `addr.rs` — Addressing mode micro-op functions
+    - `table.rs` — Compile-time step table (256 opcodes × 8 steps)
   - `hd6845s.rs` — HD6845S CRT Controller (placeholder)
   - `vidproc.rs` — VLSI Video ULA (placeholder)
   - `r6522.rs` — R6522 VIA (placeholder)
@@ -43,6 +47,16 @@ Named after the tawny owl — the BBC Micro logo is a stylised owl made from dot
 - **System glue:** The `ModelB` struct owns all components and a `Bus` struct. Glue logic copies signals between the bus and component pins each tick.
 - **Peripherals:** Bridge between emulated hardware and host platform. Operate at their own rates (frame, sample, event), not at 4 MHz.
 - **Module convention:** Newer Rust style (`emulator.rs` + `emulator/` folder, not `mod.rs`)
+
+## 6502 CPU design
+- **Two-phase clock:** phi1 (state machine) and phi2 (data latch + interrupt pipeline shift)
+- **Step table:** Static array of `fn(&mut Mos6502) -> Mos6502Output` pointers indexed by `(opcode << 3) | step`
+- **Opcode fetch is the last step** of each instruction — it checks the interrupt pipeline and either sets sync (phi2 decodes) or forces BRK ($00) for interrupts
+- **Interrupts via forced BRK:** IRQ/NMI/RESET all use opcode $00's microcode, distinguished by `brk_flags`. No special opcode slots.
+- **Const generics** for operation dispatch: `final_read::<{ops::LDA}>` monomorphises into a unique function pointer per operation, zero overhead at runtime
+- **Micro-ops return output directly** — no intermediate addr_bus/data_out/rw fields on the CPU struct. Reduces memory traffic through `self`.
+- **data_latch rule:** A micro-op's bus result is available in data_latch at the start of the NEXT micro-op (after phi2). Never read data_latch expecting your own bus result.
+- **Known TODOs:** Interrupt handling needs testing/fixing; sync/opcode-fetch logic needs cleanup; page_crossed state could be eliminated
 
 ## Build & run
 ```sh

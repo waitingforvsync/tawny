@@ -88,4 +88,6 @@ impl ModelB {
         self.system_via.reset();
         self.user_via.reset();
     }
+
+    // TODO: update tick() to call cpu.phi1() and cpu.phi2() with bus routing.
 }

@@ -1,6 +1,6 @@
-mod emulator;
-mod peripherals;
-mod systems;
+use tawny::emulator;
+use tawny::peripherals;
+use tawny::systems;
 
 use std::sync::Arc;
 
