@@ -1,3 +1,7 @@
+mod emulator;
+mod peripherals;
+mod systems;
+
 use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
@@ -140,7 +144,7 @@ impl App {
             });
 
         // A render pass is a sequence of draw commands targeting one or more attachments.
-        // Here we just clear to dark blue — a nod to the BBC Micro's MODE 7 background.
+        // Here we just clear to dark blue.
         // LoadOp::Clear fills the attachment with the given colour before any drawing.
         // StoreOp::Store keeps the result (as opposed to Discard for transient passes).
         let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

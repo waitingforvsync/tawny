@@ -28,3 +28,22 @@
 - **LowPower GPU preference** — integrated graphics is fine for emulating 1980s hardware
 - **sRGB surface format** — correct gamma-aware colour blending
 - **Fifo present mode** — vsync, no tearing
+
+## 2026-04-04 — Emulator skeleton and trait design
+
+### What we did
+- Designed the overall emulation architecture through discussion
+- Created `Component` trait with typed `Input`/`Output` associated types and `tick()`/`reset()` methods
+- Created `Clock` struct with 4 MHz base tick, phase tracking, and 2 MHz / 1 MHz edge helpers
+- Created placeholder components: `Cpu` (6502), `Crtc` (HD6845), `Vidproc` (Video ULA), `Via` (6522)
+- Created `Peripheral` trait and placeholder peripherals: `Tv`, `Keyboard`, `Speaker`, `DiskDrive`
+- Created `ModelB` system with `Bus` struct and component wiring skeleton
+- Added unit tests for clock phase alternation, 2 MHz edges, and 1 MHz edges
+
+### Design decisions
+- **4 MHz base tick** — captures CPU/video memory interleaving without the overhead of 16 MHz. Components that run slower use internal dividers.
+- **Typed Input/Output pin structs** (params style) — `tick(&mut self, input: &Input) -> Output` chosen over mutable-fields style. Cleaner contract, easier to test, output structs are small stack values with no allocation cost.
+- **Components own their pin definitions** — each component has its own Input/Output structs for true modularity. The system-level `Bus` struct is the shared representation; glue logic copies between bus and component pins.
+- **Memory map as a component** — address decoding will be modelled as a component that takes an address and produces chip-select signals.
+- **Peripherals separate from components** — peripherals bridge to host I/O at their own rates (frame, sample, event), not at the 4 MHz clock.
+- **Newer Rust module style** — `emulator.rs` + `emulator/` folder instead of `emulator/mod.rs` to avoid ambiguous tab names in the editor.
