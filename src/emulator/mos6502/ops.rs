@@ -305,7 +305,7 @@ fn sbc_decimal(cpu: &mut Mos6502) {
     cpu.set_flag(C, bin < 0x100);
 
     // BCD correction for the result.
-    let mut lo = (a & 0x0F).wrapping_sub(m & 0x0F).wrapping_sub(1 - c);
+    let lo = (a & 0x0F).wrapping_sub(m & 0x0F).wrapping_sub(1 - c);
     let mut result = if lo & 0x10 != 0 {
         ((lo.wrapping_sub(6)) & 0x0F) | ((a & 0xF0).wrapping_sub(m & 0xF0).wrapping_sub(0x10))
     } else {

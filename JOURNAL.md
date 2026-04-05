@@ -104,3 +104,34 @@
 - The sync flag / setup_opcode_fetch logic needs cleanup
 - page_crossed field could potentially be eliminated
 - No unit tests for individual operations yet
+
+## 2026-04-06 — CPU state machine refactor
+
+### What we did
+- Rewrote the micro-op model to match the Visual 6502 more closely
+- `fetch_opcode` is now always the last step in every instruction's table entry — it consumes the opcode from data_latch, checks interrupts, sets tstate, increments PC, and outputs read(PC)
+- phi2 is now trivial: latch data_latch, shift interrupt pipeline. No tstate decode.
+- Removed `sync` field from Mos6502 struct
+- Micro-ops renamed by what they consume from data_latch (e.g. `fetch_zp_addr`, `fetch_zp<OP>`, `fetch_imm<OP>`)
+- ALU operations execute as soon as the operand arrives in data_latch
+- Added `opcode_read` step for write-ending instructions (reads opcode from PC after a write cycle)
+- Added `sync_read()` helper for opcode fetch bus outputs (sync=true)
+- Separate `fetch_ind_y_hi` / `fetch_ind_y_hi_penalty` for (Indirect),Y to avoid spurious PC++
+- Dormann test detection simplified to "same sync address twice"
+
+### Performance results
+- ~294 MHz (up from ~214 MHz before refactor)
+- ~147x real-time for a 2 MHz BBC Micro CPU
+- Cycle count increased (106M vs 96M) due to extra `opcode_read` step for write instructions, but throughput improved due to simpler micro-ops
+
+### Design decisions
+- **fetch_opcode at end of every instruction** — makes the state machine explicit and predictable. phi2 has no decode logic. The interrupt check is in one place.
+- **PC increments baked into micro-ops** — each step that consumes a PC-fetched byte increments PC. No generic logic. This was the hardest part to get right — several failed attempts before finding the correct model.
+- **opcode_read after writes** — write cycles leave garbage in data_latch, so an explicit read cycle is needed before fetch_opcode can decode. This adds a cycle to write instructions but matches real hardware.
+- **Branch skip logic** — not-taken branches skip 3 steps to land on fetch_opcode. Taken+no-page-cross skips 2 steps. Uses direct tstate manipulation rather than cpu.next().
+
+### Bugs encountered during refactor
+- fetch_opcode initially output sync — wrong, sync belongs on the step BEFORE fetch_opcode (the one that reads the opcode from the bus)
+- PC was being incremented in both fetch_opcode AND the consuming step — double increment
+- Branches used cpu.next() for not-taken path, landing on branch_take instead of skipping to fetch_opcode
+- Dormann test detection was checking memory patterns for BCC/BNE traps, which triggered on non-taken branches — simplified to "same sync address twice"

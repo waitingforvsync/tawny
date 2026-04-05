@@ -1,146 +1,349 @@
-/// Addressing mode micro-op functions.
+/// Micro-op functions.
 ///
-/// Each function runs during phi1, returning output pins for that bus cycle.
-/// Every micro-op MUST explicitly advance tstate (usually via `cpu.next()`).
+/// Each micro-op consumes data_latch (from the previous cycle's phi2) and
+/// returns bus output pins. Named by what they DO with data_latch.
 ///
-/// Naming convention:
-/// - `addr_*`  — puts an address on the bus for a read
-/// - `write_*` — puts an address + data on the bus for a write
-/// - `fetch_*` — reads from PC and increments PC
+/// fetch_opcode is always the last step. It decodes the opcode from
+/// data_latch, sets tstate, increments PC, and outputs read(PC).
+///
+/// PC is incremented by whichever micro-op consumed a byte that was
+/// fetched from PC. Steps that consume data from computed addresses
+/// (ZP, absolute, stack) do not increment PC.
 
 use super::flags::*;
 use super::ops;
-use super::{read, write, Mos6502, Mos6502Output, BRK_NMI, BRK_RESET, BRK_SOFTWARE};
+use super::{read, sync_read, write, Mos6502, Mos6502Output,
+            BRK_IRQ, BRK_NMI, BRK_RESET, BRK_SOFTWARE};
 
 // ==========================================================================
-// Opcode fetch (last step of every instruction)
+// fetch_opcode — always the last step of every instruction
 // ==========================================================================
 
+/// Consume opcode from data_latch. Check interrupts. Set tstate. PC++.
+/// Output: read(PC) — the first operand byte of the new instruction.
 pub fn fetch_opcode(cpu: &mut Mos6502) -> Mos6502Output {
-    cpu.setup_opcode_fetch()
+    if cpu.nmi_pending {
+        cpu.nmi_pending = false;
+        cpu.brk_flags = BRK_NMI;
+        // Don't advance PC — we want to return to this address after RTI.
+        cpu.tstate = 0;
+    } else if cpu.irq_latch && (cpu.p & I) == 0 {
+        cpu.brk_flags = BRK_IRQ;
+        cpu.tstate = 0;
+    } else {
+        cpu.brk_flags = 0;
+        cpu.tstate = (cpu.data_latch as u16) << 3;
+    }
+    cpu.pc = cpu.pc.wrapping_add(1);
+    read(cpu.pc)
 }
 
 // ==========================================================================
-// Common: fetch byte from PC
+// Immediate: [fetch_imm<OP>, fetch_opcode]
 // ==========================================================================
 
-pub fn fetch_operand(cpu: &mut Mos6502) -> Mos6502Output {
-    let addr = cpu.pc;
+/// Consume immediate value from data_latch. Execute ALU op. PC++.
+/// Output: sync_read(PC) — the next opcode.
+pub fn fetch_imm<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+    ops::execute_read::<OP>(cpu);
+    cpu.pc = cpu.pc.wrapping_add(1);
+    cpu.next();
+    sync_read(cpu.pc)
+}
+
+// ==========================================================================
+// Implied / Accumulator: [implied<OP>, fetch_opcode]
+// ==========================================================================
+
+/// Consume dummy from data_latch (ignored). Execute implied op.
+/// Output: sync_read(PC) — the next opcode. No PC++ (already done by fetch_opcode).
+pub fn implied<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+    ops::execute_implied::<OP>(cpu);
+    cpu.next();
+    sync_read(cpu.pc)
+}
+
+/// Consume dummy. Execute accumulator RMW.
+/// Output: sync_read(PC). No PC++.
+pub fn accumulator<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+    ops::execute_accumulator::<OP>(cpu);
+    cpu.next();
+    sync_read(cpu.pc)
+}
+
+// ==========================================================================
+// Zero page read: [fetch_zp_operand, fetch_zp<OP>, fetch_opcode]
+// ==========================================================================
+
+/// Consume ZP address from data_latch. PC++.
+/// Output: read(zp_addr) — the value at the ZP address.
+pub fn fetch_zp_operand(cpu: &mut Mos6502) -> Mos6502Output {
+    cpu.base_addr = cpu.data_latch as u16;
+    cpu.pc = cpu.pc.wrapping_add(1);
+    cpu.next();
+    read(cpu.base_addr)
+}
+
+/// Consume value from ZP. Execute ALU op. No PC++.
+/// Output: sync_read(PC) — the next opcode.
+pub fn fetch_zp<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+    ops::execute_read::<OP>(cpu);
+    cpu.next();
+    sync_read(cpu.pc)
+}
+
+// ==========================================================================
+// Zero page write: [fetch_zp_operand, write_zp<OP>, opcode_read, fetch_opcode]
+// ==========================================================================
+
+/// Consume ZP address from data_latch. Write register to ZP. PC++.
+/// Output: write(zp_addr, value).
+pub fn write_zp<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+    let addr = cpu.data_latch as u16;
+    cpu.pc = cpu.pc.wrapping_add(1);
+    cpu.next();
+    write(addr, ops::store_value::<OP>(cpu))
+}
+
+/// After a write cycle, read the next opcode. No PC++.
+/// Output: sync_read(PC) — the next opcode.
+pub fn opcode_read(cpu: &mut Mos6502) -> Mos6502Output {
+    cpu.next();
+    sync_read(cpu.pc)
+}
+
+// ==========================================================================
+// Zero page indexed read: [index_zp_x, addr_zp_indexed, fetch_zp<OP>, fetch_opcode]
+// ==========================================================================
+
+/// Consume ZP address from data_latch. Add X (wrapping in ZP). PC++.
+/// Output: read(unindexed ZP addr) — dummy read.
+pub fn index_zp_x(cpu: &mut Mos6502) -> Mos6502Output {
+    let addr = cpu.data_latch as u16;
+    cpu.base_addr = cpu.data_latch.wrapping_add(cpu.x) as u16;
     cpu.pc = cpu.pc.wrapping_add(1);
     cpu.next();
     read(addr)
 }
 
-// ==========================================================================
-// Final step for read instructions: operation + opcode fetch
-// ==========================================================================
-
-pub fn final_read<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
-    ops::execute_read::<OP>(cpu);
-    cpu.setup_opcode_fetch()
-}
-
-// ==========================================================================
-// Implied / Accumulator
-// ==========================================================================
-
-pub fn implied<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
-    ops::execute_implied::<OP>(cpu);
-    cpu.next();
-    read(cpu.pc)
-}
-
-pub fn accumulator<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
-    ops::execute_accumulator::<OP>(cpu);
-    cpu.next();
-    read(cpu.pc)
-}
-
-// ==========================================================================
-// Zero page
-// ==========================================================================
-
-pub fn addr_zp(cpu: &mut Mos6502) -> Mos6502Output {
-    cpu.base_addr = cpu.data_latch as u16;
-    cpu.next();
-    read(cpu.base_addr)
-}
-
-pub fn write_zp<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
-    let addr = cpu.data_latch as u16;
-    cpu.next();
-    write(addr, ops::store_value::<OP>(cpu))
-}
-
-pub fn addr_zp_x(cpu: &mut Mos6502) -> Mos6502Output {
-    let addr = cpu.data_latch as u16;
-    cpu.base_addr = cpu.data_latch.wrapping_add(cpu.x) as u16;
-    cpu.next();
-    read(addr)
-}
-
-pub fn addr_zp_y(cpu: &mut Mos6502) -> Mos6502Output {
+/// Consume ZP address from data_latch. Add Y (wrapping in ZP). PC++.
+/// Output: read(unindexed ZP addr) — dummy read.
+pub fn index_zp_y(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = cpu.data_latch as u16;
     cpu.base_addr = cpu.data_latch.wrapping_add(cpu.y) as u16;
+    cpu.pc = cpu.pc.wrapping_add(1);
     cpu.next();
     read(addr)
 }
 
+/// Consume dummy. Output: read(base_addr) — the indexed ZP address.
 pub fn addr_zp_indexed(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.next();
     read(cpu.base_addr)
 }
 
+// Zero page indexed write: [index_zp_x, write_zp_indexed<OP>, opcode_read, fetch_opcode]
+
+/// Consume dummy. Write register to indexed ZP address.
+/// Output: write(base_addr, value).
 pub fn write_zp_indexed<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.next();
     write(cpu.base_addr, ops::store_value::<OP>(cpu))
 }
 
 // ==========================================================================
-// Absolute
+// Absolute read: [fetch_addr_lo, fetch_addr_hi, fetch_abs<OP>, fetch_opcode]
 // ==========================================================================
 
-pub fn fetch_addr_hi(cpu: &mut Mos6502) -> Mos6502Output {
+/// Consume addr low byte from data_latch. PC++.
+/// Output: read(PC) — to fetch the high byte. PC++.
+pub fn fetch_addr_lo(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.base_addr = cpu.data_latch as u16;
-    let addr = cpu.pc;
+    cpu.pc = cpu.pc.wrapping_add(1);
+    cpu.next();
+    read(cpu.pc)
+}
+
+/// Consume addr high byte from data_latch. Form complete address. PC++.
+/// Output: read(abs_addr) — the value at the absolute address.
+pub fn fetch_addr_hi(cpu: &mut Mos6502) -> Mos6502Output {
+    cpu.base_addr |= (cpu.data_latch as u16) << 8;
+    cpu.pc = cpu.pc.wrapping_add(1);
+    cpu.next();
+    read(cpu.base_addr)
+}
+
+/// Consume value from absolute address. Execute ALU op. No PC++.
+/// Output: sync_read(PC) — the next opcode.
+pub fn fetch_abs<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+    ops::execute_read::<OP>(cpu);
+    cpu.next();
+    sync_read(cpu.pc)
+}
+
+// Absolute write: [fetch_addr_lo, write_abs<OP>, opcode_read, fetch_opcode]
+
+/// Consume addr high byte. Form complete address. Write. PC++.
+/// Output: write(abs_addr, value).
+pub fn write_abs<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+    cpu.base_addr |= (cpu.data_latch as u16) << 8;
+    cpu.pc = cpu.pc.wrapping_add(1);
+    cpu.next();
+    write(cpu.base_addr, ops::store_value::<OP>(cpu))
+}
+
+// ==========================================================================
+// Absolute indexed read: [fetch_addr_lo_x, fetch_addr_hi_indexed,
+//                          fixup_indexed, fetch_abs<OP>, fetch_opcode]
+// ==========================================================================
+
+/// Consume addr low byte. Add X. Note page cross. PC++.
+/// Output: read(PC) — to fetch high byte. PC++.
+pub fn fetch_addr_lo_x(cpu: &mut Mos6502) -> Mos6502Output {
+    let lo = cpu.data_latch.wrapping_add(cpu.x);
+    cpu.page_crossed = lo < cpu.data_latch;
+    cpu.base_addr = lo as u16;
+    cpu.pc = cpu.pc.wrapping_add(1);
+    cpu.next();
+    read(cpu.pc)
+}
+
+/// Consume addr low byte. Add Y. Note page cross. PC++.
+/// Output: read(PC) — to fetch high byte. PC++.
+pub fn fetch_addr_lo_y(cpu: &mut Mos6502) -> Mos6502Output {
+    let lo = cpu.data_latch.wrapping_add(cpu.y);
+    cpu.page_crossed = lo < cpu.data_latch;
+    cpu.base_addr = lo as u16;
+    cpu.pc = cpu.pc.wrapping_add(1);
+    cpu.next();
+    read(cpu.pc)
+}
+
+/// Consume addr high byte. Form indexed address. PC++.
+/// If no page cross, skip fixup step.
+/// Output: read(indexed addr, maybe wrong page).
+pub fn fetch_addr_hi_indexed(cpu: &mut Mos6502) -> Mos6502Output {
+    cpu.base_addr |= (cpu.data_latch as u16) << 8;
+    cpu.pc = cpu.pc.wrapping_add(1);
+    if cpu.page_crossed {
+        cpu.next();
+    } else {
+        cpu.tstate += 2;
+    }
+    read(cpu.base_addr)
+}
+
+/// Consume addr high byte. Form indexed address. PC++. Always take penalty.
+/// Output: read(indexed addr, maybe wrong page).
+pub fn fetch_addr_hi_indexed_penalty(cpu: &mut Mos6502) -> Mos6502Output {
+    cpu.base_addr |= (cpu.data_latch as u16) << 8;
+    cpu.pc = cpu.pc.wrapping_add(1);
+    cpu.next();
+    read(cpu.base_addr)
+}
+
+/// Consume dummy. Fix high byte if page crossed.
+/// Output: read(corrected addr).
+pub fn fixup_indexed(cpu: &mut Mos6502) -> Mos6502Output {
+    if cpu.page_crossed {
+        cpu.base_addr = cpu.base_addr.wrapping_add(0x100);
+    }
+    cpu.next();
+    read(cpu.base_addr)
+}
+
+// Absolute indexed write: [fetch_addr_lo_x, fetch_addr_hi_indexed_penalty,
+//                           fixup_write<OP>, opcode_read, fetch_opcode]
+
+/// Consume dummy. Fix high byte if page crossed. Write.
+/// Output: write(corrected addr, value).
+pub fn fixup_write<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+    if cpu.page_crossed {
+        cpu.base_addr = cpu.base_addr.wrapping_add(0x100);
+    }
+    cpu.next();
+    write(cpu.base_addr, ops::store_value::<OP>(cpu))
+}
+
+// ==========================================================================
+// (Indirect,X) read: [fetch_ind_x_ptr, addr_ind_x_ptr, fetch_ind_lo,
+//                      fetch_ind_hi, fetch_abs<OP>, fetch_opcode]
+// ==========================================================================
+
+/// Consume ZP pointer from data_latch. Add X. PC++.
+/// Output: read(unindexed ZP addr) — dummy.
+pub fn fetch_ind_x_ptr(cpu: &mut Mos6502) -> Mos6502Output {
+    let addr = cpu.data_latch as u16;
+    cpu.base_addr = cpu.data_latch.wrapping_add(cpu.x) as u16;
     cpu.pc = cpu.pc.wrapping_add(1);
     cpu.next();
     read(addr)
 }
 
-pub fn addr_abs(cpu: &mut Mos6502) -> Mos6502Output {
+/// Consume dummy. Read target low byte from ZP pointer.
+/// Output: read(base_addr).
+pub fn addr_ind_x_ptr(cpu: &mut Mos6502) -> Mos6502Output {
+    cpu.next();
+    read(cpu.base_addr)
+}
+
+/// Consume target low byte from data_latch. Save it.
+/// Output: read(ZP pointer + 1, wrapping in ZP) — target high byte.
+pub fn fetch_ind_lo(cpu: &mut Mos6502) -> Mos6502Output {
+    let ptr_lo = cpu.base_addr;
+    cpu.base_addr = cpu.data_latch as u16;
+    cpu.next();
+    read((ptr_lo.wrapping_add(1)) & 0x00FF)
+}
+
+/// Consume target high byte from data_latch. Form complete target address.
+/// Output: read(target) — the value at the target.
+pub fn fetch_ind_hi(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.base_addr |= (cpu.data_latch as u16) << 8;
     cpu.next();
     read(cpu.base_addr)
 }
 
-pub fn write_abs<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+// (Indirect,X) write: [..., write_ind<OP>, opcode_read, fetch_opcode]
+
+/// Consume target high byte. Form target. Write.
+/// Output: write(target, value).
+pub fn write_ind<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.base_addr |= (cpu.data_latch as u16) << 8;
     cpu.next();
     write(cpu.base_addr, ops::store_value::<OP>(cpu))
 }
 
-pub fn fetch_addr_hi_add_x(cpu: &mut Mos6502) -> Mos6502Output {
-    let lo = cpu.data_latch.wrapping_add(cpu.x);
-    cpu.page_crossed = lo < cpu.data_latch;
-    cpu.base_addr = lo as u16;
-    let addr = cpu.pc;
+// ==========================================================================
+// (Indirect),Y read: [fetch_ind_y_ptr, fetch_ind_y_lo,
+//                      fetch_addr_hi_indexed, fixup_indexed,
+//                      fetch_abs<OP>, fetch_opcode]
+// ==========================================================================
+
+/// Consume ZP pointer from data_latch. PC++.
+/// Output: read(ZP ptr) — low byte of base address.
+pub fn fetch_ind_y_ptr(cpu: &mut Mos6502) -> Mos6502Output {
+    cpu.base_addr = cpu.data_latch as u16;
     cpu.pc = cpu.pc.wrapping_add(1);
     cpu.next();
-    read(addr)
+    read(cpu.base_addr)
 }
 
-pub fn fetch_addr_hi_add_y(cpu: &mut Mos6502) -> Mos6502Output {
+/// Consume base low byte. Add Y. Note page cross.
+/// Output: read(ZP ptr + 1, wrapping in ZP) — high byte of base address.
+pub fn fetch_ind_y_lo(cpu: &mut Mos6502) -> Mos6502Output {
     let lo = cpu.data_latch.wrapping_add(cpu.y);
     cpu.page_crossed = lo < cpu.data_latch;
+    let ptr_lo = cpu.base_addr;
     cpu.base_addr = lo as u16;
-    let addr = cpu.pc;
-    cpu.pc = cpu.pc.wrapping_add(1);
     cpu.next();
-    read(addr)
+    read((ptr_lo.wrapping_add(1)) & 0x00FF)
 }
 
-pub fn addr_abs_indexed(cpu: &mut Mos6502) -> Mos6502Output {
+/// Consume addr high byte for (Indirect),Y. Form indexed address.
+/// No PC++ — PC is already past the operand.
+/// If no page cross, skip fixup step.
+pub fn fetch_ind_y_hi(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.base_addr |= (cpu.data_latch as u16) << 8;
     if cpu.page_crossed {
         cpu.next();
@@ -150,79 +353,19 @@ pub fn addr_abs_indexed(cpu: &mut Mos6502) -> Mos6502Output {
     read(cpu.base_addr)
 }
 
-pub fn addr_abs_indexed_penalty(cpu: &mut Mos6502) -> Mos6502Output {
+/// Like fetch_ind_y_hi but always take penalty (for writes).
+pub fn fetch_ind_y_hi_penalty(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.base_addr |= (cpu.data_latch as u16) << 8;
     cpu.next();
     read(cpu.base_addr)
-}
-
-pub fn addr_fixup(cpu: &mut Mos6502) -> Mos6502Output {
-    if cpu.page_crossed {
-        cpu.base_addr = cpu.base_addr.wrapping_add(0x100);
-    }
-    cpu.next();
-    read(cpu.base_addr)
-}
-
-pub fn write_fixup<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
-    if cpu.page_crossed {
-        cpu.base_addr = cpu.base_addr.wrapping_add(0x100);
-    }
-    cpu.next();
-    write(cpu.base_addr, ops::store_value::<OP>(cpu))
-}
-
-// ==========================================================================
-// (Indirect,X)
-// ==========================================================================
-
-pub fn addr_indirect_lo(cpu: &mut Mos6502) -> Mos6502Output {
-    cpu.next();
-    read(cpu.base_addr)
-}
-
-pub fn addr_indirect_hi(cpu: &mut Mos6502) -> Mos6502Output {
-    let ptr_lo = cpu.base_addr;
-    cpu.base_addr = cpu.data_latch as u16;
-    cpu.next();
-    read((ptr_lo.wrapping_add(1)) & 0x00FF)
-}
-
-pub fn addr_indirect_target(cpu: &mut Mos6502) -> Mos6502Output {
-    cpu.base_addr |= (cpu.data_latch as u16) << 8;
-    cpu.next();
-    read(cpu.base_addr)
-}
-
-pub fn write_indirect_target<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
-    cpu.base_addr |= (cpu.data_latch as u16) << 8;
-    cpu.next();
-    write(cpu.base_addr, ops::store_value::<OP>(cpu))
-}
-
-// ==========================================================================
-// (Indirect),Y
-// ==========================================================================
-
-pub fn addr_ind_y_lo(cpu: &mut Mos6502) -> Mos6502Output {
-    cpu.base_addr = cpu.data_latch as u16;
-    cpu.next();
-    read(cpu.base_addr)
-}
-
-pub fn addr_ind_y_hi(cpu: &mut Mos6502) -> Mos6502Output {
-    let lo = cpu.data_latch.wrapping_add(cpu.y);
-    cpu.page_crossed = lo < cpu.data_latch;
-    let ptr_lo = cpu.base_addr;
-    cpu.base_addr = lo as u16;
-    cpu.next();
-    read((ptr_lo.wrapping_add(1)) & 0x00FF)
 }
 
 // ==========================================================================
 // Read-modify-write
 // ==========================================================================
 
+/// Consume value from memory. Dummy write original value. Compute modified.
+/// Output: write(base_addr, original).
 pub fn rmw_modify<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
     let original = cpu.data_latch;
     cpu.rmw_result = ops::execute_rmw::<OP>(cpu);
@@ -230,6 +373,8 @@ pub fn rmw_modify<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
     write(cpu.base_addr, original)
 }
 
+/// Consume nothing (write cycle). Write modified value.
+/// Output: write(base_addr, modified).
 pub fn rmw_write(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.next();
     write(cpu.base_addr, cpu.rmw_result)
@@ -239,49 +384,65 @@ pub fn rmw_write(cpu: &mut Mos6502) -> Mos6502Output {
 // Branches
 // ==========================================================================
 
+/// Consume branch offset from data_latch. Check condition. PC++.
+/// If taken: save offset, dummy read.
+/// If not taken: sync_read(PC) for next opcode.
 pub fn branch<const FLAG: u8, const SET: bool>(cpu: &mut Mos6502) -> Mos6502Output {
     let taken = if SET { cpu.p & FLAG != 0 } else { cpu.p & FLAG == 0 };
+    cpu.pc = cpu.pc.wrapping_add(1);
     if taken {
-        cpu.base_addr = cpu.data_latch as u16;
-        cpu.next();
-        read(cpu.pc)
+        cpu.base_addr = cpu.data_latch as u16; // save offset
+        cpu.next(); // proceed to branch_take
+        read(cpu.pc) // dummy read
     } else {
-        cpu.setup_opcode_fetch()
+        cpu.tstate += 3; // skip branch_take + branch_fixup, land on fetch_opcode
+        sync_read(cpu.pc)
     }
 }
 
+/// Consume dummy. Apply branch offset. Check page cross.
 pub fn branch_take(cpu: &mut Mos6502) -> Mos6502Output {
     let offset = cpu.base_addr as u8 as i8;
     let old_pc = cpu.pc;
     cpu.pc = cpu.pc.wrapping_add(offset as i16 as u16);
     if (old_pc ^ cpu.pc) & 0xFF00 != 0 {
-        cpu.next();
+        cpu.next(); // proceed to branch_fixup
         read((old_pc & 0xFF00) | (cpu.pc & 0x00FF))
     } else {
-        cpu.setup_opcode_fetch()
+        cpu.tstate += 2; // skip branch_fixup, land on fetch_opcode
+        sync_read(cpu.pc)
     }
 }
 
+/// Consume dummy. PC is correct. Output: sync_read(PC).
 pub fn branch_fixup(cpu: &mut Mos6502) -> Mos6502Output {
-    cpu.setup_opcode_fetch()
+    cpu.next();
+    sync_read(cpu.pc)
 }
 
 // ==========================================================================
 // JMP
 // ==========================================================================
 
+/// JMP abs: Consume addr high byte. Form target. Set PC. No PC++.
+/// Output: sync_read(PC) — the next opcode at the target.
 pub fn jmp_abs(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.pc = cpu.base_addr | ((cpu.data_latch as u16) << 8);
-    cpu.setup_opcode_fetch()
+    cpu.next();
+    sync_read(cpu.pc)
 }
 
-pub fn addr_jmp_indirect(cpu: &mut Mos6502) -> Mos6502Output {
+/// JMP (ind): Consume addr high byte. Form pointer.
+/// Output: read(pointer) — target low byte.
+pub fn jmp_ind_addr(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.base_addr |= (cpu.data_latch as u16) << 8;
     cpu.next();
     read(cpu.base_addr)
 }
 
-pub fn addr_jmp_indirect_hi(cpu: &mut Mos6502) -> Mos6502Output {
+/// JMP (ind): Consume target low byte. NMOS page-wrap bug.
+/// Output: read(pointer+1, wrapping within page) — target high byte.
+pub fn jmp_ind_lo(cpu: &mut Mos6502) -> Mos6502Output {
     let target_lo = cpu.data_latch;
     let hi_addr = (cpu.base_addr & 0xFF00) | ((cpu.base_addr.wrapping_add(1)) & 0x00FF);
     cpu.base_addr = target_lo as u16;
@@ -289,56 +450,71 @@ pub fn addr_jmp_indirect_hi(cpu: &mut Mos6502) -> Mos6502Output {
     read(hi_addr)
 }
 
-pub fn jmp_indirect_done(cpu: &mut Mos6502) -> Mos6502Output {
+/// JMP (ind): Consume target high byte. Set PC.
+/// Output: sync_read(PC) — opcode at target.
+pub fn jmp_ind_hi(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.pc = cpu.base_addr | ((cpu.data_latch as u16) << 8);
-    cpu.setup_opcode_fetch()
+    cpu.next();
+    sync_read(cpu.pc)
 }
 
 // ==========================================================================
 // JSR
 // ==========================================================================
 
+/// JSR: Consume addr low byte. Save it. PC++ (now points at high byte).
+/// Output: read(stack) — dummy.
 pub fn jsr_save_lo(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.base_addr = cpu.data_latch as u16;
+    cpu.pc = cpu.pc.wrapping_add(1);
     cpu.next();
     read(0x0100 | cpu.sp as u16)
 }
 
+/// JSR: Consume dummy. Push PCH. (PC points at high byte = return addr.)
+/// Output: write(stack, PCH).
 pub fn jsr_push_pch(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = 0x0100 | cpu.sp as u16;
-    let data = (cpu.pc >> 8) as u8;
     cpu.sp = cpu.sp.wrapping_sub(1);
     cpu.next();
-    write(addr, data)
+    write(addr, (cpu.pc >> 8) as u8)
 }
 
+/// JSR: Push PCL.
+/// Output: write(stack, PCL).
 pub fn jsr_push_pcl(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = 0x0100 | cpu.sp as u16;
-    let data = cpu.pc as u8;
     cpu.sp = cpu.sp.wrapping_sub(1);
     cpu.next();
-    write(addr, data)
+    write(addr, cpu.pc as u8)
 }
 
+/// JSR: Fetch high byte of target from PC (which still points at it).
+/// Output: read(PC).
 pub fn jsr_fetch_hi(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.next();
     read(cpu.pc)
 }
 
+/// JSR: Consume addr high byte. Set PC to target.
+/// Output: sync_read(PC) — opcode at target.
 pub fn jsr_done(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.pc = cpu.base_addr | ((cpu.data_latch as u16) << 8);
-    cpu.setup_opcode_fetch()
+    cpu.next();
+    sync_read(cpu.pc)
 }
 
 // ==========================================================================
 // RTS
 // ==========================================================================
 
+/// RTS: Consume dummy. Dummy read from PC.
 pub fn rts_dummy(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.next();
     read(cpu.pc)
 }
 
+/// RTS: Consume dummy. Dummy stack read, SP++.
 pub fn rts_inc_sp(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = 0x0100 | cpu.sp as u16;
     cpu.sp = cpu.sp.wrapping_add(1);
@@ -346,6 +522,7 @@ pub fn rts_inc_sp(cpu: &mut Mos6502) -> Mos6502Output {
     read(addr)
 }
 
+/// RTS: Consume dummy. Read PCL from stack, SP++.
 pub fn rts_addr_pcl(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = 0x0100 | cpu.sp as u16;
     cpu.sp = cpu.sp.wrapping_add(1);
@@ -353,18 +530,20 @@ pub fn rts_addr_pcl(cpu: &mut Mos6502) -> Mos6502Output {
     read(addr)
 }
 
-pub fn rts_addr_pch(cpu: &mut Mos6502) -> Mos6502Output {
+/// RTS: Consume PCL from data_latch. Read PCH from stack.
+pub fn rts_read_pcl(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.base_addr = cpu.data_latch as u16;
     cpu.next();
     read(0x0100 | cpu.sp as u16)
 }
 
-pub fn rts_done(cpu: &mut Mos6502) -> Mos6502Output {
+/// RTS: Consume PCH from data_latch. Form PC. PC++ (JSR pushed last byte addr).
+/// Output: sync_read(PC) — opcode at return address.
+pub fn rts_read_pch(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.pc = cpu.base_addr | ((cpu.data_latch as u16) << 8);
-    let addr = cpu.pc;
     cpu.pc = cpu.pc.wrapping_add(1);
     cpu.next();
-    read(addr)
+    sync_read(cpu.pc)
 }
 
 // ==========================================================================
@@ -390,7 +569,8 @@ pub fn rti_addr_p(cpu: &mut Mos6502) -> Mos6502Output {
     read(addr)
 }
 
-pub fn rti_addr_pcl(cpu: &mut Mos6502) -> Mos6502Output {
+/// Consume P from data_latch. Restore P. Read PCL, SP++.
+pub fn rti_read_p(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.p = (cpu.data_latch & !(B | U)) | U;
     let addr = 0x0100 | cpu.sp as u16;
     cpu.sp = cpu.sp.wrapping_add(1);
@@ -398,21 +578,25 @@ pub fn rti_addr_pcl(cpu: &mut Mos6502) -> Mos6502Output {
     read(addr)
 }
 
-pub fn rti_addr_pch(cpu: &mut Mos6502) -> Mos6502Output {
+/// Consume PCL. Read PCH.
+pub fn rti_read_pcl(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.base_addr = cpu.data_latch as u16;
     cpu.next();
     read(0x0100 | cpu.sp as u16)
 }
 
-pub fn rti_done(cpu: &mut Mos6502) -> Mos6502Output {
+/// Consume PCH. Set PC. Output: sync_read(PC).
+pub fn rti_read_pch(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.pc = cpu.base_addr | ((cpu.data_latch as u16) << 8);
-    cpu.setup_opcode_fetch()
+    cpu.next();
+    sync_read(cpu.pc)
 }
 
 // ==========================================================================
-// BRK / IRQ / NMI / RESET
+// BRK / IRQ / NMI / RESET (all use opcode $00)
 // ==========================================================================
 
+/// BRK T0: For software BRK, skip signature byte (PC++). For interrupt, don't.
 pub fn brk_t0(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = cpu.pc;
     if cpu.brk_flags == 0 {
@@ -423,7 +607,7 @@ pub fn brk_t0(cpu: &mut Mos6502) -> Mos6502Output {
     read(addr)
 }
 
-pub fn brk_t1(cpu: &mut Mos6502) -> Mos6502Output {
+pub fn brk_push_pch(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = 0x0100 | cpu.sp as u16;
     cpu.sp = cpu.sp.wrapping_sub(1);
     cpu.next();
@@ -434,7 +618,7 @@ pub fn brk_t1(cpu: &mut Mos6502) -> Mos6502Output {
     }
 }
 
-pub fn brk_t2(cpu: &mut Mos6502) -> Mos6502Output {
+pub fn brk_push_pcl(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = 0x0100 | cpu.sp as u16;
     cpu.sp = cpu.sp.wrapping_sub(1);
     cpu.next();
@@ -445,7 +629,7 @@ pub fn brk_t2(cpu: &mut Mos6502) -> Mos6502Output {
     }
 }
 
-pub fn brk_t3(cpu: &mut Mos6502) -> Mos6502Output {
+pub fn brk_push_p(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = 0x0100 | cpu.sp as u16;
     let b = if cpu.brk_flags & BRK_SOFTWARE != 0 { B | U } else { U };
     let data = (cpu.p & !(B | U)) | b;
@@ -459,7 +643,7 @@ pub fn brk_t3(cpu: &mut Mos6502) -> Mos6502Output {
     }
 }
 
-pub fn brk_t4(cpu: &mut Mos6502) -> Mos6502Output {
+pub fn brk_vector_lo(cpu: &mut Mos6502) -> Mos6502Output {
     let vector = match cpu.brk_flags {
         f if f & BRK_NMI != 0 => 0xFFFA,
         f if f & BRK_RESET != 0 => 0xFFFC,
@@ -469,7 +653,8 @@ pub fn brk_t4(cpu: &mut Mos6502) -> Mos6502Output {
     read(vector)
 }
 
-pub fn brk_t5(cpu: &mut Mos6502) -> Mos6502Output {
+/// Consume vector low byte. Fetch vector high byte.
+pub fn brk_read_vector_lo(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.base_addr = cpu.data_latch as u16;
     let vector = match cpu.brk_flags {
         f if f & BRK_NMI != 0 => 0xFFFB,
@@ -480,15 +665,18 @@ pub fn brk_t5(cpu: &mut Mos6502) -> Mos6502Output {
     read(vector)
 }
 
-pub fn brk_t6(cpu: &mut Mos6502) -> Mos6502Output {
+/// Consume vector high byte. Set PC. Output: sync_read(PC).
+pub fn brk_read_vector_hi(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.pc = cpu.base_addr | ((cpu.data_latch as u16) << 8);
-    cpu.setup_opcode_fetch()
+    cpu.next();
+    sync_read(cpu.pc)
 }
 
 // ==========================================================================
 // Stack: PHA, PHP, PLA, PLP
 // ==========================================================================
 
+/// Dummy read from PC. No PC++.
 pub fn push_dummy(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.next();
     read(cpu.pc)
@@ -520,18 +708,22 @@ pub fn pull_inc_sp(cpu: &mut Mos6502) -> Mos6502Output {
     read(addr)
 }
 
-pub fn addr_pull(cpu: &mut Mos6502) -> Mos6502Output {
+pub fn pull_read(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.next();
     read(0x0100 | cpu.sp as u16)
 }
 
+/// Consume pulled value. Load A, set flags. Output: sync_read(PC).
 pub fn pla_done(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.a = cpu.data_latch;
     cpu.set_nz(cpu.a);
-    cpu.setup_opcode_fetch()
+    cpu.next();
+    sync_read(cpu.pc)
 }
 
+/// Consume pulled value. Restore P. Output: sync_read(PC).
 pub fn plp_done(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.p = (cpu.data_latch & !(B | U)) | U;
-    cpu.setup_opcode_fetch()
+    cpu.next();
+    sync_read(cpu.pc)
 }

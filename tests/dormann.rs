@@ -45,13 +45,15 @@ fn dormann_6502_functional_test() {
     // Patch the reset vector to point to the actual test start.
     bus.ram[0xFFFC] = 0x00;
     bus.ram[0xFFFD] = 0x04;
-    let max_cycles = 100_000_000u64;
+    let max_cycles = 200_000_000u64;
     let mut prev_pc = 0xFFFFu16;
     let mut stuck_count = 0u32;
     let mut sync_count = 0u64;
 
     let start = Instant::now();
     let no_irq = Mos6502Input { data: 0, irq: false, nmi: false, ready: true };
+    // In the new model, sync is on the step BEFORE fetch_opcode.
+    // output.address during sync = the opcode address (PC before increment).
     for cycle in 0..max_cycles {
         let output = cpu.phi1();
         let addr = output.address as usize;
@@ -65,31 +67,30 @@ fn dormann_6502_functional_test() {
 
         if output.sync {
             sync_count += 1;
-            let current_pc = output.address;
-            if current_pc == prev_pc || current_pc == prev_pc.wrapping_sub(2) {
-                // JMP * or BNE/BEQ * (branch to self = 2 bytes back)
+            let pc = output.address;
+            if pc == prev_pc {
                 stuck_count += 1;
-                if stuck_count > 3 {
-                    if current_pc == SUCCESS_PC {
+                if stuck_count > 2 {
+                    if pc == SUCCESS_PC {
                         let elapsed = start.elapsed();
                         let mhz = cycle as f64 / elapsed.as_secs_f64() / 1_000_000.0;
                         println!(
-                            "Dormann test PASSED at PC=${:04X} after {} cycles ({:.3}s, {:.1} MHz effective)",
-                            current_pc, cycle, elapsed.as_secs_f64(), mhz
+                            "Dormann test PASSED at PC=${:04X} after {} cycles ({:.3}s, {:.1} MHz)",
+                            pc, cycle, elapsed.as_secs_f64(), mhz
                         );
                         return;
                     } else {
                         panic!(
                             "Dormann test FAILED: stuck at PC=${:04X} after {} cycles \
                              (expected success at ${:04X})",
-                            current_pc, cycle, SUCCESS_PC
+                            pc, cycle, SUCCESS_PC
                         );
                     }
                 }
             } else {
                 stuck_count = 0;
             }
-            prev_pc = current_pc;
+            prev_pc = pc as u16;
         }
     }
 
