@@ -13,7 +13,7 @@ use super::{MicroOp, TABLE_SIZE, MAX_STEPS};
 pub static STEPS: [MicroOp; TABLE_SIZE] = build_steps();
 
 fn trap(cpu: &mut super::Mos6502) -> super::Mos6502Output {
-    cpu.tstate -= 1;
+    // Don't call cpu.next() — stay at the same tstate forever.
     super::read(cpu.pc)
 }
 
