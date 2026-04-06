@@ -135,3 +135,12 @@
 - PC was being incremented in both fetch_opcode AND the consuming step — double increment
 - Branches used cpu.next() for not-taken path, landing on branch_take instead of skipping to fetch_opcode
 - Dormann test detection was checking memory patterns for BCC/BNE traps, which triggered on non-taken branches — simplified to "same sync address twice"
+
+## 2026-04-06 — Eliminate page_crossed field; cleanup
+
+### What we did
+- Removed `page_crossed` field from Mos6502 struct. Page cross is now detected via bit 8 of `base_addr`: storing `data_latch as u16 + index as u16` naturally carries into bit 8 when a page boundary is crossed.
+- `fetch_addr_hi_indexed` stores the correct address in `base_addr` and outputs the wrong-page address via `wrapping_sub(0x100)`. `fixup_indexed` simply reads from `base_addr`.
+- `fetch_addr_hi_indexed_penalty` uses `wrapping_add(msb)` to preserve the carry in bit 8. `fixup_write` propagates the carry with `wrapping_add(base_addr & 0x100)`.
+- Renamed `cpu.next()` → `cpu.next_state()`, added `cpu.skip_next_state()` and `cpu.inc_pc()` helpers.
+- ~306 MHz release (up from ~294 MHz).

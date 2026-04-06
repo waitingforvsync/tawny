@@ -42,7 +42,6 @@ pub struct Mos6502 {
     tstate: u16,
     data_latch: u8,
     base_addr: u16,
-    page_crossed: bool,
     rmw_result: u8,
 
     // --- Interrupt/BRK state ---
@@ -66,7 +65,6 @@ impl Mos6502 {
             brk_flags: BRK_RESET,
             data_latch: 0,
             base_addr: 0,
-            page_crossed: false,
             rmw_result: 0,
 
             irq_latch: false,
@@ -107,8 +105,18 @@ impl Mos6502 {
     }
 
     #[inline(always)]
-    pub(crate) fn next(&mut self) {
+    pub(crate) fn next_state(&mut self) {
         self.tstate += 1;
+    }
+
+    #[inline(always)]
+    pub(crate) fn skip_next_state(&mut self) {
+        self.tstate += 2;
+    }
+
+    #[inline(always)]
+    pub(crate) fn inc_pc(&mut self) {
+        self.pc = self.pc.wrapping_add(1);
     }
 
     pub fn reset(&mut self) {

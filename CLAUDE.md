@@ -61,7 +61,8 @@ Named after the tawny owl — the BBC Micro logo is a stylised owl made from dot
 - **Interrupts via forced BRK:** IRQ/NMI/RESET all use opcode $00's microcode, distinguished by `brk_flags`. No special opcode slots.
 - **Const generics** for operation dispatch: `fetch_zp::<{ops::LDA}>` monomorphises into a unique function pointer per operation
 - **Micro-ops return output directly** — no intermediate state fields on the CPU struct
-- **Known TODOs:** Interrupt handling needs testing; page_crossed state could be eliminated
+- **Page cross detection** uses bit 8 of `base_addr` — the u16 result of `data_latch + index` naturally carries into bit 8 when a page boundary is crossed. No separate `page_crossed` field needed.
+- **Known TODOs:** Interrupt handling needs testing; write-ending instructions have an extra cycle (opcode_read)
 - **Visual 6502 reference** http://www.visual6502.org/JSSim/expert.html?graphics=false&steps=40&a=0000&d=58a5088509a50aea69674240&a=FFFE&d=0b00&r=0000&loglevel=3&logmore=idl,irq,sync,abl,abh&irq0=19
 ```
 cycle	ab	db	rw	Fetch	pc	a	x	y	s	p	Execute	State	ir	tcstate	pd	idl	irq	sync	abl	abh
