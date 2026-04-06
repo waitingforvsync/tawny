@@ -144,3 +144,12 @@
 - `fetch_addr_hi_indexed_penalty` uses `wrapping_add(msb)` to preserve the carry in bit 8. `fixup_write` propagates the carry with `wrapping_add(base_addr & 0x100)`.
 - Renamed `cpu.next()` → `cpu.next_state()`, added `cpu.skip_next_state()` and `cpu.inc_pc()` helpers.
 - ~306 MHz release (up from ~294 MHz).
+
+## 2026-04-06 — Consolidate duplicate micro-ops
+
+### What we did
+- Unified `fetch_imm`, `fetch_zp`, `fetch_abs` into single `fetch_data<OP>` — always does PC++ so preceding steps no longer need to. Write/RMW steps compensate with their own PC++.
+- Identified and merged ~35 duplicate micro-op pairs into generic building blocks: `latch_to_base`, `read_base`, `latch_to_base_hi`, `latch_to_pc`, `latch_to_base_read_stack`, `inc_sp_read_stack`, `dummy_read`, `opcode_read`.
+- Eliminated `branch_fixup` (= `opcode_read`), all per-instruction dummy/inc_sp variants (RTS/RTI/PHA/PLP shared), `jmp_abs`/`jmp_ind_hi`/`jsr_done`/`rti_read_pch`/`brk_read_vector_hi` (all = `latch_to_pc`).
+- addr.rs went from ~70 functions to ~35. table.rs reads much more cleanly with generic building blocks.
+- ~294 MHz release, Dormann test passes.

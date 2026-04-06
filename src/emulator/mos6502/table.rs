@@ -2,10 +2,6 @@
 ///
 /// Every instruction ends with `fetch_opcode`, which consumes the opcode
 /// byte from data_latch, decodes it, and sets tstate for the next instruction.
-///
-/// Note: write-ending instructions need an extra `opcode_read` step before
-/// fetch_opcode. This adds a cycle compared to real hardware for PHA, PHP,
-/// and other write-ending instructions. TODO: fix cycle counts.
 use super::addr::*;
 use super::ops;
 use super::{MicroOp, TABLE_SIZE, MAX_STEPS};
@@ -13,7 +9,7 @@ use super::{MicroOp, TABLE_SIZE, MAX_STEPS};
 pub static STEPS: [MicroOp; TABLE_SIZE] = build_steps();
 
 fn trap(cpu: &mut super::Mos6502) -> super::Mos6502Output {
-    // Don't call cpu.next() — stay at the same tstate forever.
+    // Don't call cpu.next_state() — stay at the same tstate forever.
     super::read(cpu.pc)
 }
 
@@ -36,11 +32,11 @@ const fn set(table: &mut [MicroOp; TABLE_SIZE], opcode: usize, steps: &[MicroOp]
 // ======================================================================
 
 const fn imm_read<const OP: u8>() -> [MicroOp; 2] {
-    [fetch_imm::<OP>, fetch_opcode]
+    [fetch_data::<OP>, fetch_opcode]
 }
 
 const fn zp_read<const OP: u8>() -> [MicroOp; 3] {
-    [fetch_zp_operand, fetch_zp::<OP>, fetch_opcode]
+    [latch_to_base, fetch_data::<OP>, fetch_opcode]
 }
 
 const fn zp_write<const OP: u8>() -> [MicroOp; 3] {
@@ -48,23 +44,23 @@ const fn zp_write<const OP: u8>() -> [MicroOp; 3] {
 }
 
 const fn zp_x_read<const OP: u8>() -> [MicroOp; 4] {
-    [index_zp_x, addr_zp_indexed, fetch_zp::<OP>, fetch_opcode]
+    [index_zp_x, read_base, fetch_data::<OP>, fetch_opcode]
 }
 
 const fn zp_y_read<const OP: u8>() -> [MicroOp; 4] {
-    [index_zp_y, addr_zp_indexed, fetch_zp::<OP>, fetch_opcode]
+    [index_zp_y, read_base, fetch_data::<OP>, fetch_opcode]
 }
 
 const fn zp_x_write<const OP: u8>() -> [MicroOp; 5] {
-    [index_zp_x, addr_zp_indexed, write_zp_indexed::<OP>, opcode_read, fetch_opcode]
+    [index_zp_x, read_base, write_zp_indexed::<OP>, opcode_read, fetch_opcode]
 }
 
 const fn zp_y_write<const OP: u8>() -> [MicroOp; 5] {
-    [index_zp_y, addr_zp_indexed, write_zp_indexed::<OP>, opcode_read, fetch_opcode]
+    [index_zp_y, read_base, write_zp_indexed::<OP>, opcode_read, fetch_opcode]
 }
 
 const fn abs_read<const OP: u8>() -> [MicroOp; 4] {
-    [fetch_addr_lo, fetch_addr_hi, fetch_abs::<OP>, fetch_opcode]
+    [fetch_addr_lo, latch_to_base_hi, fetch_data::<OP>, fetch_opcode]
 }
 
 const fn abs_write<const OP: u8>() -> [MicroOp; 4] {
@@ -72,11 +68,11 @@ const fn abs_write<const OP: u8>() -> [MicroOp; 4] {
 }
 
 const fn abs_x_read<const OP: u8>() -> [MicroOp; 5] {
-    [fetch_addr_lo_x, fetch_addr_hi_indexed, fixup_indexed, fetch_abs::<OP>, fetch_opcode]
+    [fetch_addr_lo_x, fetch_addr_hi_indexed, read_base, fetch_data::<OP>, fetch_opcode]
 }
 
 const fn abs_y_read<const OP: u8>() -> [MicroOp; 5] {
-    [fetch_addr_lo_y, fetch_addr_hi_indexed, fixup_indexed, fetch_abs::<OP>, fetch_opcode]
+    [fetch_addr_lo_y, fetch_addr_hi_indexed, read_base, fetch_data::<OP>, fetch_opcode]
 }
 
 const fn abs_x_write<const OP: u8>() -> [MicroOp; 5] {
@@ -88,19 +84,19 @@ const fn abs_y_write<const OP: u8>() -> [MicroOp; 5] {
 }
 
 const fn ind_x_read<const OP: u8>() -> [MicroOp; 6] {
-    [fetch_ind_x_ptr, addr_ind_x_ptr, fetch_ind_lo, fetch_ind_hi, fetch_abs::<OP>, fetch_opcode]
+    [index_zp_x, read_base, fetch_ind_lo, latch_to_base_hi, fetch_data::<OP>, fetch_opcode]
 }
 
 const fn ind_x_write<const OP: u8>() -> [MicroOp; 6] {
-    [fetch_ind_x_ptr, addr_ind_x_ptr, fetch_ind_lo, write_ind::<OP>, opcode_read, fetch_opcode]
+    [index_zp_x, read_base, fetch_ind_lo, write_ind::<OP>, opcode_read, fetch_opcode]
 }
 
 const fn ind_y_read<const OP: u8>() -> [MicroOp; 6] {
-    [fetch_ind_y_ptr, fetch_ind_y_lo, fetch_ind_y_hi, fixup_indexed, fetch_abs::<OP>, fetch_opcode]
+    [latch_to_base, fetch_ind_y_lo, fetch_addr_hi_indexed, read_base, fetch_data::<OP>, fetch_opcode]
 }
 
 const fn ind_y_write<const OP: u8>() -> [MicroOp; 6] {
-    [fetch_ind_y_ptr, fetch_ind_y_lo, fetch_ind_y_hi_penalty, fixup_write::<OP>, opcode_read, fetch_opcode]
+    [latch_to_base, fetch_ind_y_lo, fetch_addr_hi_indexed_penalty, fixup_write::<OP>, opcode_read, fetch_opcode]
 }
 
 const fn acc_rmw<const OP: u8>() -> [MicroOp; 2] {
@@ -108,19 +104,19 @@ const fn acc_rmw<const OP: u8>() -> [MicroOp; 2] {
 }
 
 const fn zp_rmw<const OP: u8>() -> [MicroOp; 5] {
-    [fetch_zp_operand, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode]
+    [latch_to_base, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode]
 }
 
 const fn zp_x_rmw<const OP: u8>() -> [MicroOp; 6] {
-    [index_zp_x, addr_zp_indexed, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode]
+    [index_zp_x, read_base, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode]
 }
 
 const fn abs_rmw<const OP: u8>() -> [MicroOp; 6] {
-    [fetch_addr_lo, fetch_addr_hi, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode]
+    [fetch_addr_lo, latch_to_base_hi, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode]
 }
 
 const fn abs_x_rmw<const OP: u8>() -> [MicroOp; 7] {
-    [fetch_addr_lo_x, fetch_addr_hi_indexed_penalty, fixup_indexed, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode]
+    [fetch_addr_lo_x, fetch_addr_hi_indexed_penalty, read_base, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode]
 }
 
 const fn imp<const OP: u8>() -> [MicroOp; 2] {
@@ -135,9 +131,8 @@ const fn build_steps() -> [MicroOp; TABLE_SIZE] {
     let mut t = [trap as MicroOp; TABLE_SIZE];
 
     // BRK ($00) — also handles IRQ, NMI, RESET via brk_flags.
-    // brk_read_vector_hi outputs sync_read, then fetch_opcode decodes.
     set(&mut t, 0x00, &[brk_t0, brk_push_pch, brk_push_pcl, brk_push_p,
-                         brk_vector_lo, brk_read_vector_lo, brk_read_vector_hi, fetch_opcode]);
+                         brk_vector_lo, brk_read_vector_lo, latch_to_pc, fetch_opcode]);
 
     // --- Immediate ---
     set(&mut t, 0x69, &imm_read::<{ops::ADC}>());
@@ -320,33 +315,33 @@ const fn build_steps() -> [MicroOp; TABLE_SIZE] {
 
     // --- Branches ---
     use super::flags;
-    set(&mut t, 0x90, &[branch::<{flags::C}, false>, branch_take, branch_fixup, fetch_opcode]);
-    set(&mut t, 0xB0, &[branch::<{flags::C}, true>,  branch_take, branch_fixup, fetch_opcode]);
-    set(&mut t, 0xF0, &[branch::<{flags::Z}, true>,  branch_take, branch_fixup, fetch_opcode]);
-    set(&mut t, 0xD0, &[branch::<{flags::Z}, false>, branch_take, branch_fixup, fetch_opcode]);
-    set(&mut t, 0x30, &[branch::<{flags::N}, true>,  branch_take, branch_fixup, fetch_opcode]);
-    set(&mut t, 0x10, &[branch::<{flags::N}, false>, branch_take, branch_fixup, fetch_opcode]);
-    set(&mut t, 0x70, &[branch::<{flags::V}, true>,  branch_take, branch_fixup, fetch_opcode]);
-    set(&mut t, 0x50, &[branch::<{flags::V}, false>, branch_take, branch_fixup, fetch_opcode]);
+    set(&mut t, 0x90, &[branch::<{flags::C}, false>, branch_take, opcode_read, fetch_opcode]);
+    set(&mut t, 0xB0, &[branch::<{flags::C}, true>,  branch_take, opcode_read, fetch_opcode]);
+    set(&mut t, 0xF0, &[branch::<{flags::Z}, true>,  branch_take, opcode_read, fetch_opcode]);
+    set(&mut t, 0xD0, &[branch::<{flags::Z}, false>, branch_take, opcode_read, fetch_opcode]);
+    set(&mut t, 0x30, &[branch::<{flags::N}, true>,  branch_take, opcode_read, fetch_opcode]);
+    set(&mut t, 0x10, &[branch::<{flags::N}, false>, branch_take, opcode_read, fetch_opcode]);
+    set(&mut t, 0x70, &[branch::<{flags::V}, true>,  branch_take, opcode_read, fetch_opcode]);
+    set(&mut t, 0x50, &[branch::<{flags::V}, false>, branch_take, opcode_read, fetch_opcode]);
 
     // --- JMP ---
-    set(&mut t, 0x4C, &[fetch_addr_lo, jmp_abs, fetch_opcode]);
-    set(&mut t, 0x6C, &[fetch_addr_lo, jmp_ind_addr, jmp_ind_lo, jmp_ind_hi, fetch_opcode]);
+    set(&mut t, 0x4C, &[fetch_addr_lo, latch_to_pc, fetch_opcode]);
+    set(&mut t, 0x6C, &[fetch_addr_lo, latch_to_base_hi, jmp_ind_lo, latch_to_pc, fetch_opcode]);
 
     // --- JSR ---
-    set(&mut t, 0x20, &[jsr_save_lo, jsr_push_pch, jsr_push_pcl, jsr_fetch_hi, jsr_done, fetch_opcode]);
+    set(&mut t, 0x20, &[jsr_save_lo, jsr_push_pch, jsr_push_pcl, dummy_read, latch_to_pc, fetch_opcode]);
 
     // --- RTS ---
-    set(&mut t, 0x60, &[rts_dummy, rts_inc_sp, rts_addr_pcl, rts_read_pcl, rts_read_pch, fetch_opcode]);
+    set(&mut t, 0x60, &[dummy_read, inc_sp_read_stack, inc_sp_read_stack, latch_to_base_read_stack, rts_read_pch, fetch_opcode]);
 
     // --- RTI ---
-    set(&mut t, 0x40, &[rti_dummy, rti_inc_sp, rti_addr_p, rti_read_p, rti_read_pcl, rti_read_pch, fetch_opcode]);
+    set(&mut t, 0x40, &[dummy_read, inc_sp_read_stack, inc_sp_read_stack, rti_read_p, latch_to_base_read_stack, latch_to_pc, fetch_opcode]);
 
     // --- Stack ---
-    set(&mut t, 0x48, &[push_dummy, pha_push, opcode_read, fetch_opcode]);
-    set(&mut t, 0x08, &[push_dummy, php_push, opcode_read, fetch_opcode]);
-    set(&mut t, 0x68, &[pull_dummy, pull_inc_sp, pull_read, pla_done, fetch_opcode]);
-    set(&mut t, 0x28, &[pull_dummy, pull_inc_sp, pull_read, plp_done, fetch_opcode]);
+    set(&mut t, 0x48, &[dummy_read, pha_push, opcode_read, fetch_opcode]);
+    set(&mut t, 0x08, &[dummy_read, php_push, opcode_read, fetch_opcode]);
+    set(&mut t, 0x68, &[dummy_read, inc_sp_read_stack, pull_read, pla_done, fetch_opcode]);
+    set(&mut t, 0x28, &[dummy_read, inc_sp_read_stack, pull_read, plp_done, fetch_opcode]);
 
     t
 }
