@@ -28,8 +28,8 @@ pub fn fetch_opcode(cpu: &mut Mos6502) -> Mos6502Output {
     } else {
         cpu.brk_flags = 0;
         cpu.tstate = (cpu.data_latch as u16) << 3;
+        cpu.inc_pc();
     }
-    cpu.inc_pc();
     read(cpu.pc)
 }
 
