@@ -1,10 +1,7 @@
 /// ALU and register operations.
 ///
-/// Each operation reads from `cpu.data_latch` (for read-type ops) or
-/// `cpu.a`/`cpu.x`/`cpu.y` (for stores) and updates registers/flags.
-///
 /// Operations are identified by `u8` constants so they can be used as
-/// const generic parameters (Rust stable doesn't support const enum generics).
+/// const generic parameters.
 use super::flags::*;
 use super::Mos6502;
 
@@ -50,102 +47,99 @@ pub const CLD: u8 = 36;
 pub const SED: u8 = 37;
 pub const NOP: u8 = 38;
 
-// --- Read operations: use data_latch as input ---
+// --- Read operations ---
 
-/// Execute a read-type operation using `cpu.data_latch`.
-/// Called by the final micro-op step of read instructions.
+/// Execute a read-type operation with the given value.
 #[inline(always)]
-pub fn execute_read<const OP: u8>(cpu: &mut Mos6502) {
+pub fn execute_read<const OP: u8>(cpu: &mut Mos6502, val: u8) {
     match OP {
-        ADC => adc(cpu),
-        SBC => sbc(cpu),
+        ADC => adc(cpu, val),
+        SBC => sbc(cpu, val),
         AND => {
-            cpu.a &= cpu.data_latch;
+            cpu.a &= val;
             cpu.set_nz(cpu.a);
         }
         ORA => {
-            cpu.a |= cpu.data_latch;
+            cpu.a |= val;
             cpu.set_nz(cpu.a);
         }
         EOR => {
-            cpu.a ^= cpu.data_latch;
+            cpu.a ^= val;
             cpu.set_nz(cpu.a);
         }
-        CMP => compare(cpu, cpu.a, cpu.data_latch),
-        CPX => compare(cpu, cpu.x, cpu.data_latch),
-        CPY => compare(cpu, cpu.y, cpu.data_latch),
+        CMP => compare(cpu, cpu.a, val),
+        CPX => compare(cpu, cpu.x, val),
+        CPY => compare(cpu, cpu.y, val),
         BIT => {
-            cpu.set_flag(Z, (cpu.a & cpu.data_latch) == 0);
-            cpu.set_flag(N, cpu.data_latch & N != 0);
-            cpu.set_flag(V, cpu.data_latch & V != 0);
+            cpu.set_flag(Z, (cpu.a & val) == 0);
+            cpu.set_flag(N, val & N != 0);
+            cpu.set_flag(V, val & V != 0);
         }
         LDA => {
-            cpu.a = cpu.data_latch;
+            cpu.a = val;
             cpu.set_nz(cpu.a);
         }
         LDX => {
-            cpu.x = cpu.data_latch;
+            cpu.x = val;
             cpu.set_nz(cpu.x);
         }
         LDY => {
-            cpu.y = cpu.data_latch;
+            cpu.y = val;
             cpu.set_nz(cpu.y);
         }
         _ => {}
     }
 }
 
-// --- Read-modify-write operations: transform data_latch, return result ---
+// --- Read-modify-write operations ---
 
-/// Execute an RMW operation on `cpu.data_latch`. Returns the modified value.
-/// Called by the modify step of RMW instructions.
+/// Execute an RMW operation on `val`. Returns the modified value.
 #[inline(always)]
-pub fn execute_rmw<const OP: u8>(cpu: &mut Mos6502) -> u8 {
+pub fn execute_rmw<const OP: u8>(cpu: &mut Mos6502, val: u8) -> u8 {
     match OP {
         ASL => {
-            cpu.set_flag(C, cpu.data_latch & 0x80 != 0);
-            let result = cpu.data_latch << 1;
+            cpu.set_flag(C, val & 0x80 != 0);
+            let result = val << 1;
             cpu.set_nz(result);
             result
         }
         LSR => {
-            cpu.set_flag(C, cpu.data_latch & 0x01 != 0);
-            let result = cpu.data_latch >> 1;
+            cpu.set_flag(C, val & 0x01 != 0);
+            let result = val >> 1;
             cpu.set_nz(result);
             result
         }
         ROL => {
             let carry_in = cpu.p & C;
-            cpu.set_flag(C, cpu.data_latch & 0x80 != 0);
-            let result = (cpu.data_latch << 1) | carry_in;
+            cpu.set_flag(C, val & 0x80 != 0);
+            let result = (val << 1) | carry_in;
             cpu.set_nz(result);
             result
         }
         ROR => {
             let carry_in = (cpu.p & C) << 7;
-            cpu.set_flag(C, cpu.data_latch & 0x01 != 0);
-            let result = (cpu.data_latch >> 1) | carry_in;
+            cpu.set_flag(C, val & 0x01 != 0);
+            let result = (val >> 1) | carry_in;
             cpu.set_nz(result);
             result
         }
         INC => {
-            let result = cpu.data_latch.wrapping_add(1);
+            let result = val.wrapping_add(1);
             cpu.set_nz(result);
             result
         }
         DEC => {
-            let result = cpu.data_latch.wrapping_sub(1);
+            let result = val.wrapping_sub(1);
             cpu.set_nz(result);
             result
         }
-        _ => cpu.data_latch,
+        _ => val,
     }
 }
 
-// --- Implied operations: operate on registers only ---
+// --- Implied operations ---
 
 /// Execute an implied operation (no memory operand).
-/// Called by the final micro-op step of implied instructions.
 #[inline(always)]
 pub fn execute_implied<const OP: u8>(cpu: &mut Mos6502) {
     match OP {
@@ -187,7 +181,6 @@ pub fn execute_implied<const OP: u8>(cpu: &mut Mos6502) {
         }
         TXS => {
             cpu.sp = cpu.x;
-            // TXS does NOT set flags
         }
         CLC => cpu.p &= !C,
         SEC => cpu.p |= C,
@@ -201,17 +194,15 @@ pub fn execute_implied<const OP: u8>(cpu: &mut Mos6502) {
     }
 }
 
-// --- Accumulator RMW: shift/rotate the accumulator directly ---
+// --- Accumulator RMW ---
 
 /// Execute an accumulator-mode RMW (ASL A, LSR A, ROL A, ROR A).
 #[inline(always)]
 pub fn execute_accumulator<const OP: u8>(cpu: &mut Mos6502) {
-    // Temporarily put A into data_latch so we can reuse the RMW logic.
-    cpu.data_latch = cpu.a;
-    cpu.a = execute_rmw::<OP>(cpu);
+    cpu.a = execute_rmw::<OP>(cpu, cpu.a);
 }
 
-// --- Store operations: return the value to write ---
+// --- Store operations ---
 
 /// Return the register value for a store instruction.
 #[inline(always)]
@@ -226,51 +217,44 @@ pub fn store_value<const OP: u8>(cpu: &Mos6502) -> u8 {
 
 // --- Internal helpers ---
 
-fn adc(cpu: &mut Mos6502) {
+fn adc(cpu: &mut Mos6502, val: u8) {
     if cpu.p & D != 0 {
-        adc_decimal(cpu);
+        adc_decimal(cpu, val);
     } else {
-        adc_binary(cpu);
+        adc_binary(cpu, val);
     }
 }
 
-fn adc_binary(cpu: &mut Mos6502) {
+fn adc_binary(cpu: &mut Mos6502, val: u8) {
     let a = cpu.a as u16;
-    let m = cpu.data_latch as u16;
+    let m = val as u16;
     let c = (cpu.p & C) as u16;
     let sum = a + m + c;
 
     cpu.set_flag(C, sum > 0xFF);
-    // Overflow: set if sign of result differs from sign of BOTH inputs
     cpu.set_flag(V, (!(a ^ m) & (a ^ sum) & 0x80) != 0);
     cpu.a = sum as u8;
     cpu.set_nz(cpu.a);
 }
 
-fn adc_decimal(cpu: &mut Mos6502) {
+fn adc_decimal(cpu: &mut Mos6502, val: u8) {
     let a = cpu.a as u16;
-    let m = cpu.data_latch as u16;
+    let m = val as u16;
     let c = (cpu.p & C) as u16;
 
-    // Z flag is based on the binary result (NMOS quirk).
     let bin_sum = a + m + c;
     cpu.set_flag(Z, (bin_sum & 0xFF) == 0);
 
-    // Low nybble with BCD correction.
     let mut lo = (a & 0x0F) + (m & 0x0F) + c;
     if lo > 0x09 {
         lo += 0x06;
     }
 
-    // High nybble: sum with carry from low nybble.
     let mut sum = (a & 0xF0) + (m & 0xF0) + (if lo > 0x0F { 0x10 } else { 0 }) + (lo & 0x0F);
 
-    // N and V are set from this intermediate result (after low correction,
-    // before high correction) — NMOS behaviour.
     cpu.set_flag(N, (sum & 0x80) != 0);
     cpu.set_flag(V, (!(a ^ m) & (a ^ sum) & 0x80) != 0);
 
-    // High nybble BCD correction.
     if sum > 0x9F {
         sum += 0x60;
     }
@@ -279,32 +263,25 @@ fn adc_decimal(cpu: &mut Mos6502) {
     cpu.a = sum as u8;
 }
 
-fn sbc(cpu: &mut Mos6502) {
+fn sbc(cpu: &mut Mos6502, val: u8) {
     if cpu.p & D != 0 {
-        sbc_decimal(cpu);
+        sbc_decimal(cpu, val);
     } else {
-        // SBC is equivalent to ADC with the operand complemented.
-        let original = cpu.data_latch;
-        cpu.data_latch = !cpu.data_latch;
-        adc_binary(cpu);
-        cpu.data_latch = original;
+        adc_binary(cpu, !val);
     }
 }
 
-fn sbc_decimal(cpu: &mut Mos6502) {
+fn sbc_decimal(cpu: &mut Mos6502, val: u8) {
     let a = cpu.a as u16;
-    let m = cpu.data_latch as u16;
+    let m = val as u16;
     let c = (cpu.p & C) as u16;
 
-    // On NMOS 6502, SBC decimal flags (N, V, Z, C) are all based on the
-    // binary result — only the accumulator result is BCD-corrected.
     let bin = a.wrapping_sub(m).wrapping_sub(1 - c);
     cpu.set_flag(Z, (bin & 0xFF) == 0);
     cpu.set_flag(N, (bin & 0x80) != 0);
     cpu.set_flag(V, ((a ^ m) & (a ^ bin) & 0x80) != 0);
     cpu.set_flag(C, bin < 0x100);
 
-    // BCD correction for the result.
     let lo = (a & 0x0F).wrapping_sub(m & 0x0F).wrapping_sub(1 - c);
     let mut result = if lo & 0x10 != 0 {
         ((lo.wrapping_sub(6)) & 0x0F) | ((a & 0xF0).wrapping_sub(m & 0xF0).wrapping_sub(0x10))

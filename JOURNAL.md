@@ -153,3 +153,12 @@
 - Eliminated `branch_fixup` (= `opcode_read`), all per-instruction dummy/inc_sp variants (RTS/RTI/PHA/PLP shared), `jmp_abs`/`jmp_ind_hi`/`jsr_done`/`rti_read_pch`/`brk_read_vector_hi` (all = `latch_to_pc`).
 - addr.rs went from ~70 functions to ~35. table.rs reads much more cleanly with generic building blocks.
 - ~294 MHz release, Dormann test passes.
+
+## 2026-04-06 — Refactor ALU operations to take explicit value parameters
+
+### What we did
+- `execute_read` now takes a `val: u8` parameter instead of reading `cpu.data_latch` directly. Call site passes `cpu.data_latch`.
+- `execute_rmw` now takes a `val: u8` parameter instead of reading `cpu.data_latch`. Call sites pass the appropriate value.
+- `execute_accumulator` passes `cpu.a` directly to `execute_rmw` — no more temporary data_latch hack.
+- `sbc` binary path simplified: `adc_binary(cpu, !val)` instead of save/restore data_latch.
+- All internal helpers (`adc`, `sbc`, `adc_binary`, `adc_decimal`, `sbc_decimal`) take `val: u8`.

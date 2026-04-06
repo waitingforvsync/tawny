@@ -36,7 +36,7 @@ pub fn fetch_opcode(cpu: &mut Mos6502) -> Mos6502Output {
 /// Consume data value from data_latch. Execute ALU op. PC++.
 /// Output: sync_read(PC). Used as the final read step for all addressing modes.
 pub fn fetch_data<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
-    ops::execute_read::<OP>(cpu);
+    ops::execute_read::<OP>(cpu, cpu.data_latch);
     cpu.inc_pc();
     cpu.next_state();
     sync_read(cpu.pc)
@@ -277,7 +277,7 @@ pub fn fetch_ind_y_lo(cpu: &mut Mos6502) -> Mos6502Output {
 /// Consume value from memory. Dummy write original. Compute modified. PC++.
 pub fn rmw_modify<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
     let original = cpu.data_latch;
-    cpu.rmw_result = ops::execute_rmw::<OP>(cpu);
+    cpu.rmw_result = ops::execute_rmw::<OP>(cpu, original);
     cpu.inc_pc();
     cpu.next_state();
     write(cpu.base_addr, original)
