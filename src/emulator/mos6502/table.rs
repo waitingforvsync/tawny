@@ -44,11 +44,11 @@ const fn zp_write<const OP: u8>() -> [MicroOp; 3] {
 }
 
 const fn zp_x_read<const OP: u8>() -> [MicroOp; 4] {
-    [index_zp_x, read_base, fetch_data::<OP>, fetch_opcode]
+    [latch_to_base, add_index_x, fetch_data::<OP>, fetch_opcode]
 }
 
 const fn zp_y_read<const OP: u8>() -> [MicroOp; 4] {
-    [index_zp_y, read_base, fetch_data::<OP>, fetch_opcode]
+    [latch_to_base, add_index_y, fetch_data::<OP>, fetch_opcode]
 }
 
 const fn zp_x_write<const OP: u8>() -> [MicroOp; 5] {
@@ -121,6 +121,18 @@ const fn abs_x_rmw<const OP: u8>() -> [MicroOp; 7] {
 
 const fn imp<const OP: u8>() -> [MicroOp; 2] {
     [implied::<OP>, fetch_opcode]
+}
+
+const fn branch_op<const FLAG: u8, const SET: bool>() -> [MicroOp; 4] {
+    [branch::<FLAG, SET>, branch_take, opcode_read, fetch_opcode]
+}
+
+const fn push<const OP: u8>() -> [MicroOp; 4] {
+    [dummy_read, stack_push::<OP>, opcode_read, fetch_opcode]
+}
+
+const fn pull<const OP: u8>() -> [MicroOp; 5] {
+    [dummy_read, inc_sp_read_stack, pull_read, stack_pull::<OP>, fetch_opcode]
 }
 
 // ======================================================================
@@ -315,14 +327,14 @@ const fn build_steps() -> [MicroOp; TABLE_SIZE] {
 
     // --- Branches ---
     use super::flags;
-    set(&mut t, 0x90, &[branch::<{flags::C}, false>, branch_take, opcode_read, fetch_opcode]);
-    set(&mut t, 0xB0, &[branch::<{flags::C}, true>,  branch_take, opcode_read, fetch_opcode]);
-    set(&mut t, 0xF0, &[branch::<{flags::Z}, true>,  branch_take, opcode_read, fetch_opcode]);
-    set(&mut t, 0xD0, &[branch::<{flags::Z}, false>, branch_take, opcode_read, fetch_opcode]);
-    set(&mut t, 0x30, &[branch::<{flags::N}, true>,  branch_take, opcode_read, fetch_opcode]);
-    set(&mut t, 0x10, &[branch::<{flags::N}, false>, branch_take, opcode_read, fetch_opcode]);
-    set(&mut t, 0x70, &[branch::<{flags::V}, true>,  branch_take, opcode_read, fetch_opcode]);
-    set(&mut t, 0x50, &[branch::<{flags::V}, false>, branch_take, opcode_read, fetch_opcode]);
+    set(&mut t, 0x90, &branch_op::<{flags::C}, false>());
+    set(&mut t, 0xB0, &branch_op::<{flags::C}, true>());
+    set(&mut t, 0xF0, &branch_op::<{flags::Z}, true>());
+    set(&mut t, 0xD0, &branch_op::<{flags::Z}, false>());
+    set(&mut t, 0x30, &branch_op::<{flags::N}, true>());
+    set(&mut t, 0x10, &branch_op::<{flags::N}, false>());
+    set(&mut t, 0x70, &branch_op::<{flags::V}, true>());
+    set(&mut t, 0x50, &branch_op::<{flags::V}, false>());
 
     // --- JMP ---
     set(&mut t, 0x4C, &[fetch_addr_lo, latch_to_pc, fetch_opcode]);
@@ -338,10 +350,10 @@ const fn build_steps() -> [MicroOp; TABLE_SIZE] {
     set(&mut t, 0x40, &[dummy_read, inc_sp_read_stack, inc_sp_read_stack, rti_read_p, latch_to_base_read_stack, latch_to_pc, fetch_opcode]);
 
     // --- Stack ---
-    set(&mut t, 0x48, &[dummy_read, pha_push, opcode_read, fetch_opcode]);
-    set(&mut t, 0x08, &[dummy_read, php_push, opcode_read, fetch_opcode]);
-    set(&mut t, 0x68, &[dummy_read, inc_sp_read_stack, pull_read, pla_done, fetch_opcode]);
-    set(&mut t, 0x28, &[dummy_read, inc_sp_read_stack, pull_read, plp_done, fetch_opcode]);
+    set(&mut t, 0x48, &push::<{ops::PHA}>());
+    set(&mut t, 0x08, &push::<{ops::PHP}>());
+    set(&mut t, 0x68, &pull::<{ops::PLA}>());
+    set(&mut t, 0x28, &pull::<{ops::PLP}>());
 
     t
 }

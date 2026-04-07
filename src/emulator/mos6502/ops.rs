@@ -46,6 +46,10 @@ pub const CLV: u8 = 35;
 pub const CLD: u8 = 36;
 pub const SED: u8 = 37;
 pub const NOP: u8 = 38;
+pub const PHA: u8 = 39;
+pub const PHP: u8 = 40;
+pub const PLA: u8 = 41;
+pub const PLP: u8 = 42;
 
 // --- Read operations ---
 
@@ -212,6 +216,35 @@ pub fn store_value<const OP: u8>(cpu: &Mos6502) -> u8 {
         STX => cpu.x,
         STY => cpu.y,
         _ => 0,
+    }
+}
+
+// --- Push operations ---
+
+/// Return the value to push onto the stack.
+#[inline(always)]
+pub fn push_value<const OP: u8>(cpu: &Mos6502) -> u8 {
+    match OP {
+        PHA => cpu.a,
+        PHP => cpu.p | B | U,
+        _ => 0,
+    }
+}
+
+// --- Pull operations ---
+
+/// Load the pulled value into the appropriate register/flags.
+#[inline(always)]
+pub fn pull_done<const OP: u8>(cpu: &mut Mos6502, val: u8) {
+    match OP {
+        PLA => {
+            cpu.a = val;
+            cpu.set_nz(cpu.a);
+        }
+        PLP => {
+            cpu.p = (val & !(B | U)) | U;
+        }
+        _ => {}
     }
 }
 

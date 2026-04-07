@@ -139,7 +139,7 @@ pub fn write_zp<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
 // ==========================================================================
 
 /// Consume ZP address. Add X (wrapping in ZP). Output: read(unindexed addr).
-/// Also used for (Indirect,X) pointer.
+/// Used for (Indirect,X) pointer and ZP,X write/RMW modes.
 pub fn index_zp_x(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = cpu.data_latch as u16;
     cpu.base_addr = cpu.data_latch.wrapping_add(cpu.x) as u16;
@@ -148,11 +148,28 @@ pub fn index_zp_x(cpu: &mut Mos6502) -> Mos6502Output {
 }
 
 /// Consume ZP address. Add Y (wrapping in ZP). Output: read(unindexed addr).
+/// Used for ZP,Y write mode.
 pub fn index_zp_y(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = cpu.data_latch as u16;
     cpu.base_addr = cpu.data_latch.wrapping_add(cpu.y) as u16;
     cpu.next_state();
     read(addr)
+}
+
+/// Consume dummy (wasted read from unindexed ZP). Add X to base_addr (wrapping in ZP).
+/// Output: read(base_addr). Used for ZP,X read mode.
+pub fn add_index_x(cpu: &mut Mos6502) -> Mos6502Output {
+    cpu.base_addr = (cpu.base_addr as u8).wrapping_add(cpu.x) as u16;
+    cpu.next_state();
+    read(cpu.base_addr)
+}
+
+/// Consume dummy (wasted read from unindexed ZP). Add Y to base_addr (wrapping in ZP).
+/// Output: read(base_addr). Used for ZP,Y read mode.
+pub fn add_index_y(cpu: &mut Mos6502) -> Mos6502Output {
+    cpu.base_addr = (cpu.base_addr as u8).wrapping_add(cpu.y) as u16;
+    cpu.next_state();
+    read(cpu.base_addr)
 }
 
 /// Consume dummy. Write register to indexed ZP address. PC++.
@@ -472,18 +489,12 @@ pub fn brk_read_vector_lo(cpu: &mut Mos6502) -> Mos6502Output {
 // Stack: PHA, PHP, PLA, PLP
 // ==========================================================================
 
-pub fn pha_push(cpu: &mut Mos6502) -> Mos6502Output {
+/// Push register/flags to stack. Decrement SP.
+pub fn stack_push<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = 0x0100 | cpu.sp as u16;
     cpu.sp = cpu.sp.wrapping_sub(1);
     cpu.next_state();
-    write(addr, cpu.a)
-}
-
-pub fn php_push(cpu: &mut Mos6502) -> Mos6502Output {
-    let addr = 0x0100 | cpu.sp as u16;
-    cpu.sp = cpu.sp.wrapping_sub(1);
-    cpu.next_state();
-    write(addr, cpu.p | B | U)
+    write(addr, ops::push_value::<OP>(cpu))
 }
 
 /// Read from stack[SP].
@@ -492,17 +503,9 @@ pub fn pull_read(cpu: &mut Mos6502) -> Mos6502Output {
     read(0x0100 | cpu.sp as u16)
 }
 
-/// Consume pulled value. Load A, set flags. Output: sync_read(PC).
-pub fn pla_done(cpu: &mut Mos6502) -> Mos6502Output {
-    cpu.a = cpu.data_latch;
-    cpu.set_nz(cpu.a);
-    cpu.next_state();
-    sync_read(cpu.pc)
-}
-
-/// Consume pulled value. Restore P. Output: sync_read(PC).
-pub fn plp_done(cpu: &mut Mos6502) -> Mos6502Output {
-    cpu.p = (cpu.data_latch & !(B | U)) | U;
+/// Consume pulled value. Load register/flags. Output: sync_read(PC).
+pub fn stack_pull<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+    ops::pull_done::<OP>(cpu, cpu.data_latch);
     cpu.next_state();
     sync_read(cpu.pc)
 }
