@@ -206,4 +206,5 @@
 - Added `read_base_hi` — reads from `base_addr | (data_latch << 8)` without storing. Used by `abs_read` and `ind_x_read`.
 - Merged `write_zp_indexed`, `fixup_write` into `write_base` (all identical: `PC++; write(base_addr, store_value)`). Used by ZP indexed write, absolute indexed write, and (Indirect),Y write.
 - Eliminated `write_ind` — `ind_x_write` reuses `write_abs` directly (identical operation).
+- Added named generators for all remaining inline step arrays: `brk()`, `jmp_abs()`, `jmp_ind()`, `jsr()`, `rts()`, `rti()`. Every opcode in the table now uses a named generator function.
 - ~283 MHz release, Dormann test passes.

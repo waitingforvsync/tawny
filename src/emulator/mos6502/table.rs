@@ -135,6 +135,33 @@ const fn pull<OP: ops::PullOp>() -> [MicroOp; 4] {
     [inc_sp_read_stack, pull_read, stack_pull::<OP>, fetch_opcode]
 }
 
+const fn brk() -> [MicroOp; 7] {
+    [brk_push_pch, brk_push_pcl, brk_push_p,
+     brk_vector_lo, brk_read_vector_lo, latch_to_pc, fetch_opcode]
+}
+
+const fn jmp_abs() -> [MicroOp; 3] {
+    [fetch_addr_lo, latch_to_pc, fetch_opcode]
+}
+
+const fn jmp_ind() -> [MicroOp; 5] {
+    [fetch_addr_lo, latch_to_base_hi, jmp_ind_lo, latch_to_pc, fetch_opcode]
+}
+
+const fn jsr() -> [MicroOp; 6] {
+    [jsr_save_lo, jsr_push_pch, jsr_push_pcl, dummy_read, latch_to_pc, fetch_opcode]
+}
+
+const fn rts() -> [MicroOp; 6] {
+    [dummy_read, inc_sp_read_stack, inc_sp_read_stack,
+     latch_to_base_read_stack, rts_read_pch, fetch_opcode]
+}
+
+const fn rti() -> [MicroOp; 6] {
+    [inc_sp_read_stack, inc_sp_read_stack, rti_read_p,
+     latch_to_base_read_stack, latch_to_pc, fetch_opcode]
+}
+
 // ======================================================================
 // Table builder
 // ======================================================================
@@ -143,9 +170,7 @@ const fn build_steps() -> [MicroOp; TABLE_SIZE] {
     let mut t = [trap as MicroOp; TABLE_SIZE];
 
     // BRK ($00) — also handles IRQ, NMI, RESET via brk_flags.
-    // Software BRK (brk_flags == 0) skips signature byte in brk_push_pch.
-    set(&mut t, 0x00, &[brk_push_pch, brk_push_pcl, brk_push_p,
-                         brk_vector_lo, brk_read_vector_lo, latch_to_pc, fetch_opcode]);
+    set(&mut t, 0x00, &brk());
 
     // --- Immediate ---
     set(&mut t, 0x69, &imm_read::<ops::Adc>());
@@ -338,17 +363,13 @@ const fn build_steps() -> [MicroOp; TABLE_SIZE] {
     set(&mut t, 0x50, &branch_op::<{flags::V}, false>());
 
     // --- JMP ---
-    set(&mut t, 0x4C, &[fetch_addr_lo, latch_to_pc, fetch_opcode]);
-    set(&mut t, 0x6C, &[fetch_addr_lo, latch_to_base_hi, jmp_ind_lo, latch_to_pc, fetch_opcode]);
+    set(&mut t, 0x4C, &jmp_abs());
+    set(&mut t, 0x6C, &jmp_ind());
 
-    // --- JSR ---
-    set(&mut t, 0x20, &[jsr_save_lo, jsr_push_pch, jsr_push_pcl, dummy_read, latch_to_pc, fetch_opcode]);
-
-    // --- RTS ---
-    set(&mut t, 0x60, &[dummy_read, inc_sp_read_stack, inc_sp_read_stack, latch_to_base_read_stack, rts_read_pch, fetch_opcode]);
-
-    // --- RTI ---
-    set(&mut t, 0x40, &[inc_sp_read_stack, inc_sp_read_stack, rti_read_p, latch_to_base_read_stack, latch_to_pc, fetch_opcode]);
+    // --- JSR / RTS / RTI ---
+    set(&mut t, 0x20, &jsr());
+    set(&mut t, 0x60, &rts());
+    set(&mut t, 0x40, &rti());
 
     // --- Stack ---
     set(&mut t, 0x48, &push::<ops::Pha>());
