@@ -162,3 +162,25 @@
 - `execute_accumulator` passes `cpu.a` directly to `execute_rmw` — no more temporary data_latch hack.
 - `sbc` binary path simplified: `adc_binary(cpu, !val)` instead of save/restore data_latch.
 - All internal helpers (`adc`, `sbc`, `adc_binary`, `adc_decimal`, `sbc_decimal`) take `val: u8`.
+
+## 2026-04-07 — Fix ZP indexed read timing; table helpers
+
+### What we did
+- Split ZP,X/ZP,Y read micro-ops so indexing happens during the wasted read cycle (matching real 6502 timing): `latch_to_base` → `add_index_x`/`add_index_y` → `fetch_data` → `fetch_opcode`.
+- Old `index_zp_x`/`index_zp_y` retained for write, RMW, and (Indirect,X) modes.
+- Added `branch_op`, `push`, `pull` const helper functions in table.rs to reduce repetition.
+
+## 2026-04-08 — Replace const generics with ZST types and traits
+
+### What we did
+- Replaced all 42 `u8` operation constants and match-based dispatch functions with zero-sized types and trait implementations.
+- Six traits: `ReadOp`, `StoreOp`, `RmwOp`, `ImpliedOp`, `PushOp`, `PullOp`.
+- 42 ZSTs: `Adc`, `Sbc`, `Lda`, `Sta`, `Asl`, `Nop`, `Pha`, `Pla`, etc.
+- Micro-ops in addr.rs are now generic over traits instead of `const OP: u8`, e.g. `fn fetch_data<OP: ReadOp>`.
+- Table syntax simplified: `imm_read::<ops::Adc>()` instead of `imm_read::<{ops::ADC}>()`.
+- ~286 MHz release, Dormann test passes.
+
+### Design decisions
+- **Trait bounds enforce valid combinations** — you can't pass `Sta` to `imm_read` because `Sta` doesn't implement `ReadOp`. The old `u8` approach had catch-all `_ => {}` arms that silently accepted any constant.
+- **No performance change** — the compiler monomorphises each `<OP: Trait>` instantiation identically to the old `<const OP: u8>` approach. Both produce unique function pointers per operation.
+- **PascalCase ZSTs** follow Rust naming conventions for types, making the table read naturally.

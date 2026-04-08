@@ -7,7 +7,7 @@
 /// data_latch, sets tstate, increments PC, and outputs read(PC).
 
 use super::flags::*;
-use super::ops;
+use super::ops::{ReadOp, StoreOp, RmwOp, ImpliedOp, PushOp, PullOp};
 use super::{read, sync_read, write, Mos6502, Mos6502Output,
             BRK_IRQ, BRK_NMI, BRK_RESET, BRK_SOFTWARE};
 
@@ -35,8 +35,8 @@ pub fn fetch_opcode(cpu: &mut Mos6502) -> Mos6502Output {
 
 /// Consume data value from data_latch. Execute ALU op. PC++.
 /// Output: sync_read(PC). Used as the final read step for all addressing modes.
-pub fn fetch_data<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
-    ops::execute_read::<OP>(cpu, cpu.data_latch);
+pub fn fetch_data<OP: ReadOp>(cpu: &mut Mos6502) -> Mos6502Output {
+    OP::execute(cpu, cpu.data_latch);
     cpu.inc_pc();
     cpu.next_state();
     sync_read(cpu.pc)
@@ -109,15 +109,15 @@ pub fn inc_sp_read_stack(cpu: &mut Mos6502) -> Mos6502Output {
 // ==========================================================================
 
 /// Consume dummy. Execute implied op. Output: sync_read(PC).
-pub fn implied<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
-    ops::execute_implied::<OP>(cpu);
+pub fn implied<OP: ImpliedOp>(cpu: &mut Mos6502) -> Mos6502Output {
+    OP::execute(cpu);
     cpu.next_state();
     sync_read(cpu.pc)
 }
 
 /// Consume dummy. Execute accumulator RMW. Output: sync_read(PC).
-pub fn accumulator<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
-    ops::execute_accumulator::<OP>(cpu);
+pub fn accumulator<OP: RmwOp>(cpu: &mut Mos6502) -> Mos6502Output {
+    cpu.a = OP::execute(cpu, cpu.a);
     cpu.next_state();
     sync_read(cpu.pc)
 }
@@ -127,11 +127,11 @@ pub fn accumulator<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
 // ==========================================================================
 
 /// Consume ZP address from data_latch. Write register. PC++.
-pub fn write_zp<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+pub fn write_zp<OP: StoreOp>(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = cpu.data_latch as u16;
     cpu.inc_pc();
     cpu.next_state();
-    write(addr, ops::store_value::<OP>(cpu))
+    write(addr, OP::value(cpu))
 }
 
 // ==========================================================================
@@ -173,10 +173,10 @@ pub fn add_index_y(cpu: &mut Mos6502) -> Mos6502Output {
 }
 
 /// Consume dummy. Write register to indexed ZP address. PC++.
-pub fn write_zp_indexed<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+pub fn write_zp_indexed<OP: StoreOp>(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.inc_pc();
     cpu.next_state();
-    write(cpu.base_addr, ops::store_value::<OP>(cpu))
+    write(cpu.base_addr, OP::value(cpu))
 }
 
 // ==========================================================================
@@ -192,11 +192,11 @@ pub fn fetch_addr_lo(cpu: &mut Mos6502) -> Mos6502Output {
 }
 
 /// Consume addr high byte. Form complete address. Write. PC++.
-pub fn write_abs<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+pub fn write_abs<OP: StoreOp>(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.base_addr |= (cpu.data_latch as u16) << 8;
     cpu.inc_pc();
     cpu.next_state();
-    write(cpu.base_addr, ops::store_value::<OP>(cpu))
+    write(cpu.base_addr, OP::value(cpu))
 }
 
 // ==========================================================================
@@ -246,10 +246,10 @@ pub fn fetch_addr_hi_indexed_penalty(cpu: &mut Mos6502) -> Mos6502Output {
 }
 
 /// Consume dummy. Write to base_addr (with page cross fixup). PC++.
-pub fn fixup_write<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+pub fn fixup_write<OP: StoreOp>(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.inc_pc();
     cpu.next_state();
-    write(cpu.base_addr, ops::store_value::<OP>(cpu))
+    write(cpu.base_addr, OP::value(cpu))
 }
 
 // ==========================================================================
@@ -265,11 +265,11 @@ pub fn fetch_ind_lo(cpu: &mut Mos6502) -> Mos6502Output {
 }
 
 /// Consume target high byte. Form target. Write. PC++.
-pub fn write_ind<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+pub fn write_ind<OP: StoreOp>(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.base_addr |= (cpu.data_latch as u16) << 8;
     cpu.inc_pc();
     cpu.next_state();
-    write(cpu.base_addr, ops::store_value::<OP>(cpu))
+    write(cpu.base_addr, OP::value(cpu))
 }
 
 // ==========================================================================
@@ -292,9 +292,9 @@ pub fn fetch_ind_y_lo(cpu: &mut Mos6502) -> Mos6502Output {
 // ==========================================================================
 
 /// Consume value from memory. Dummy write original. Compute modified. PC++.
-pub fn rmw_modify<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+pub fn rmw_modify<OP: RmwOp>(cpu: &mut Mos6502) -> Mos6502Output {
     let original = cpu.data_latch;
-    cpu.rmw_result = ops::execute_rmw::<OP>(cpu, original);
+    cpu.rmw_result = OP::execute(cpu, original);
     cpu.inc_pc();
     cpu.next_state();
     write(cpu.base_addr, original)
@@ -490,11 +490,11 @@ pub fn brk_read_vector_lo(cpu: &mut Mos6502) -> Mos6502Output {
 // ==========================================================================
 
 /// Push register/flags to stack. Decrement SP.
-pub fn stack_push<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
+pub fn stack_push<OP: PushOp>(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = 0x0100 | cpu.sp as u16;
     cpu.sp = cpu.sp.wrapping_sub(1);
     cpu.next_state();
-    write(addr, ops::push_value::<OP>(cpu))
+    write(addr, OP::value(cpu))
 }
 
 /// Read from stack[SP].
@@ -504,8 +504,8 @@ pub fn pull_read(cpu: &mut Mos6502) -> Mos6502Output {
 }
 
 /// Consume pulled value. Load register/flags. Output: sync_read(PC).
-pub fn stack_pull<const OP: u8>(cpu: &mut Mos6502) -> Mos6502Output {
-    ops::pull_done::<OP>(cpu, cpu.data_latch);
+pub fn stack_pull<OP: PullOp>(cpu: &mut Mos6502) -> Mos6502Output {
+    OP::execute(cpu, cpu.data_latch);
     cpu.next_state();
     sync_read(cpu.pc)
 }

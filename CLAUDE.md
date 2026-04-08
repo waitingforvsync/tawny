@@ -28,7 +28,7 @@ Named after the tawny owl — the BBC Micro logo is a stylised owl made from dot
   - `clock.rs` — 4 MHz master clock, phase tracking, frequency divider helpers
   - `mos6502.rs` + `mos6502/` — MOS 6502 CPU (cycle-accurate, passes Dormann test)
     - `flags.rs` — Processor status flag bit constants
-    - `ops.rs` — ALU/register operations with const generic dispatch
+    - `ops.rs` — ALU/register operations via ZST types and traits
     - `addr.rs` — Addressing mode micro-op functions
     - `table.rs` — Compile-time step table (256 opcodes × 8 steps)
   - `hd6845s.rs` — HD6845S CRT Controller (placeholder)
@@ -59,7 +59,7 @@ Named after the tawny owl — the BBC Micro logo is a stylised owl made from dot
 - **PC increments baked into each micro-op** — no generic logic. Steps that consume a PC-fetched byte increment PC; steps that consume from computed addresses don't.
 - **`opcode_read` step** after write cycles — reads the next opcode from PC (since data_latch after a write contains the written value, not an opcode)
 - **Interrupts via forced BRK:** IRQ/NMI/RESET all use opcode $00's microcode, distinguished by `brk_flags`. No special opcode slots.
-- **Const generics** for operation dispatch: `fetch_zp::<{ops::LDA}>` monomorphises into a unique function pointer per operation
+- **ZST trait dispatch** for operations: each op is a zero-sized type (`ops::Lda`, `ops::Adc`, etc.) implementing a trait (`ReadOp`, `StoreOp`, `RmwOp`, `ImpliedOp`, `PushOp`, `PullOp`). Micro-ops are generic over the trait: `fetch_data::<ops::Lda>` monomorphises into a unique function pointer per operation, with compile-time enforcement that only valid ops are used with each addressing mode.
 - **Micro-ops return output directly** — no intermediate state fields on the CPU struct
 - **Page cross detection** uses bit 8 of `base_addr` — the u16 result of `data_latch + index` naturally carries into bit 8 when a page boundary is crossed. No separate `page_crossed` field needed.
 - **Known TODOs:** Interrupt handling needs testing; write-ending instructions have an extra cycle (opcode_read)
