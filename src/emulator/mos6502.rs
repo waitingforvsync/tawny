@@ -10,7 +10,6 @@ pub const TABLE_SIZE: usize = 256 * MAX_STEPS;
 
 pub type MicroOp = fn(&mut Mos6502) -> Mos6502Output;
 
-pub const BRK_SOFTWARE: u8 = 0x01;
 pub const BRK_IRQ: u8 = 0x02;
 pub const BRK_NMI: u8 = 0x04;
 pub const BRK_RESET: u8 = 0x08;

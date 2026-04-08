@@ -9,7 +9,7 @@
 use super::flags::*;
 use super::ops::{ReadOp, StoreOp, RmwOp, ImpliedOp, PushOp, PullOp};
 use super::{read, sync_read, write, Mos6502, Mos6502Output,
-            BRK_IRQ, BRK_NMI, BRK_RESET, BRK_SOFTWARE};
+            BRK_IRQ, BRK_NMI, BRK_RESET};
 
 // ==========================================================================
 // Generic building blocks
@@ -414,18 +414,11 @@ pub fn rti_read_p(cpu: &mut Mos6502) -> Mos6502Output {
 // BRK / IRQ / NMI / RESET
 // ==========================================================================
 
-/// BRK T0: For software BRK, skip signature byte (PC++). For interrupt, don't.
-pub fn brk_t0(cpu: &mut Mos6502) -> Mos6502Output {
-    let addr = cpu.pc;
+pub fn brk_push_pch(cpu: &mut Mos6502) -> Mos6502Output {
+    // Software BRK (brk_flags == 0): skip signature byte.
     if cpu.brk_flags == 0 {
-        cpu.brk_flags = BRK_SOFTWARE;
         cpu.inc_pc();
     }
-    cpu.next_state();
-    read(addr)
-}
-
-pub fn brk_push_pch(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = 0x0100 | cpu.sp as u16;
     cpu.sp = cpu.sp.wrapping_sub(1);
     cpu.next_state();
@@ -449,7 +442,7 @@ pub fn brk_push_pcl(cpu: &mut Mos6502) -> Mos6502Output {
 
 pub fn brk_push_p(cpu: &mut Mos6502) -> Mos6502Output {
     let addr = 0x0100 | cpu.sp as u16;
-    let b = if cpu.brk_flags & BRK_SOFTWARE != 0 { B | U } else { U };
+    let b = if cpu.brk_flags == 0 { B | U } else { U };
     let data = (cpu.p & !(B | U)) | b;
     cpu.sp = cpu.sp.wrapping_sub(1);
     cpu.p |= I;

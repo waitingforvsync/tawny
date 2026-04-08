@@ -184,3 +184,17 @@
 - **Trait bounds enforce valid combinations** — you can't pass `Sta` to `imm_read` because `Sta` doesn't implement `ReadOp`. The old `u8` approach had catch-all `_ => {}` arms that silently accepted any constant.
 - **No performance change** — the compiler monomorphises each `<OP: Trait>` instantiation identically to the old `<const OP: u8>` approach. Both produce unique function pointers per operation.
 - **PascalCase ZSTs** follow Rust naming conventions for types, making the table read naturally.
+
+## 2026-04-08 — Fix cycle counts across the board
+
+### What we did
+- Removed superfluous dummy_read steps from push (PHA/PHP), pull (PLA/PLP), and RTI — these instructions were each one cycle too long. The "dummy read" is just fetch_opcode's bus output being ignored by the next step.
+- Removed extra read_base from ZP,X/ZP,Y write modes — was 5 cycles, now correct at 4.
+- Eliminated `BRK_SOFTWARE` flag. Software BRK is now `brk_flags == 0` (the natural state from fetch_opcode's normal decode path). Removed `brk_t0` step — its PC++ for the signature byte is folded into `brk_push_pch`. BRK/IRQ/NMI now 7 cycles instead of 8.
+- Verified all cycle counts match documented 6502 timings for every addressing mode.
+- Dormann test cycle count dropped from 106M to 96M due to corrected instruction timings.
+- ~282 MHz release.
+
+### Design decisions
+- **brk_flags == 0 means software BRK** — the natural state from fetch_opcode (which clears brk_flags for normal decode) now doubles as the software BRK indicator. Only hardware interrupts set nonzero flags (IRQ, NMI, RESET). This removes a state and a step.
+- **No dummy_read before push/pull/RTI** — fetch_opcode already outputs read(PC). The next micro-op simply ignores data_latch while doing productive work. The "dummy read" was an extra cycle that doesn't exist on real hardware.

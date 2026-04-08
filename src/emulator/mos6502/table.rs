@@ -51,12 +51,12 @@ const fn zp_y_read<OP: ops::ReadOp>() -> [MicroOp; 4] {
     [latch_to_base, add_index_y, fetch_data::<OP>, fetch_opcode]
 }
 
-const fn zp_x_write<OP: ops::StoreOp>() -> [MicroOp; 5] {
-    [index_zp_x, read_base, write_zp_indexed::<OP>, opcode_read, fetch_opcode]
+const fn zp_x_write<OP: ops::StoreOp>() -> [MicroOp; 4] {
+    [index_zp_x, write_zp_indexed::<OP>, opcode_read, fetch_opcode]
 }
 
-const fn zp_y_write<OP: ops::StoreOp>() -> [MicroOp; 5] {
-    [index_zp_y, read_base, write_zp_indexed::<OP>, opcode_read, fetch_opcode]
+const fn zp_y_write<OP: ops::StoreOp>() -> [MicroOp; 4] {
+    [index_zp_y, write_zp_indexed::<OP>, opcode_read, fetch_opcode]
 }
 
 const fn abs_read<OP: ops::ReadOp>() -> [MicroOp; 4] {
@@ -127,12 +127,12 @@ const fn branch_op<const FLAG: u8, const SET: bool>() -> [MicroOp; 4] {
     [branch::<FLAG, SET>, branch_take, opcode_read, fetch_opcode]
 }
 
-const fn push<OP: ops::PushOp>() -> [MicroOp; 4] {
-    [dummy_read, stack_push::<OP>, opcode_read, fetch_opcode]
+const fn push<OP: ops::PushOp>() -> [MicroOp; 3] {
+    [stack_push::<OP>, opcode_read, fetch_opcode]
 }
 
-const fn pull<OP: ops::PullOp>() -> [MicroOp; 5] {
-    [dummy_read, inc_sp_read_stack, pull_read, stack_pull::<OP>, fetch_opcode]
+const fn pull<OP: ops::PullOp>() -> [MicroOp; 4] {
+    [inc_sp_read_stack, pull_read, stack_pull::<OP>, fetch_opcode]
 }
 
 // ======================================================================
@@ -143,7 +143,8 @@ const fn build_steps() -> [MicroOp; TABLE_SIZE] {
     let mut t = [trap as MicroOp; TABLE_SIZE];
 
     // BRK ($00) — also handles IRQ, NMI, RESET via brk_flags.
-    set(&mut t, 0x00, &[brk_t0, brk_push_pch, brk_push_pcl, brk_push_p,
+    // Software BRK (brk_flags == 0) skips signature byte in brk_push_pch.
+    set(&mut t, 0x00, &[brk_push_pch, brk_push_pcl, brk_push_p,
                          brk_vector_lo, brk_read_vector_lo, latch_to_pc, fetch_opcode]);
 
     // --- Immediate ---
@@ -347,7 +348,7 @@ const fn build_steps() -> [MicroOp; TABLE_SIZE] {
     set(&mut t, 0x60, &[dummy_read, inc_sp_read_stack, inc_sp_read_stack, latch_to_base_read_stack, rts_read_pch, fetch_opcode]);
 
     // --- RTI ---
-    set(&mut t, 0x40, &[dummy_read, inc_sp_read_stack, inc_sp_read_stack, rti_read_p, latch_to_base_read_stack, latch_to_pc, fetch_opcode]);
+    set(&mut t, 0x40, &[inc_sp_read_stack, inc_sp_read_stack, rti_read_p, latch_to_base_read_stack, latch_to_pc, fetch_opcode]);
 
     // --- Stack ---
     set(&mut t, 0x48, &push::<ops::Pha>());

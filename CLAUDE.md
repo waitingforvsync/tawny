@@ -58,11 +58,12 @@ Named after the tawny owl — the BBC Micro logo is a stylised owl made from dot
 - **ALU ops execute as soon as operand arrives** — the step that has the operand in data_latch executes the operation immediately, then outputs sync_read(PC) for the next opcode
 - **PC increments baked into each micro-op** — no generic logic. Steps that consume a PC-fetched byte increment PC; steps that consume from computed addresses don't.
 - **`opcode_read` step** after write cycles — reads the next opcode from PC (since data_latch after a write contains the written value, not an opcode)
-- **Interrupts via forced BRK:** IRQ/NMI/RESET all use opcode $00's microcode, distinguished by `brk_flags`. No special opcode slots.
+- **Interrupts via forced BRK:** IRQ/NMI/RESET all use opcode $00's microcode, distinguished by `brk_flags` (0 = software BRK, nonzero = interrupt). No special opcode slots.
 - **ZST trait dispatch** for operations: each op is a zero-sized type (`ops::Lda`, `ops::Adc`, etc.) implementing a trait (`ReadOp`, `StoreOp`, `RmwOp`, `ImpliedOp`, `PushOp`, `PullOp`). Micro-ops are generic over the trait: `fetch_data::<ops::Lda>` monomorphises into a unique function pointer per operation, with compile-time enforcement that only valid ops are used with each addressing mode.
 - **Micro-ops return output directly** — no intermediate state fields on the CPU struct
 - **Page cross detection** uses bit 8 of `base_addr` — the u16 result of `data_latch + index` naturally carries into bit 8 when a page boundary is crossed. No separate `page_crossed` field needed.
-- **Known TODOs:** Interrupt handling needs testing; write-ending instructions have an extra cycle (opcode_read)
+- **All cycle counts match documented 6502 timings** — verified against reference for every addressing mode
+- **Known TODOs:** Interrupt handling needs testing
 - **Visual 6502 reference** http://www.visual6502.org/JSSim/expert.html?graphics=false&steps=40&a=0000&d=58a5088509a50aea69674240&a=FFFE&d=0b00&r=0000&loglevel=3&logmore=idl,irq,sync,abl,abh&irq0=19
 ```
 cycle	ab	db	rw	Fetch	pc	a	x	y	s	p	Execute	State	ir	tcstate	pd	idl	irq	sync	abl	abh
