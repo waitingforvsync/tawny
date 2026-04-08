@@ -198,3 +198,12 @@
 ### Design decisions
 - **brk_flags == 0 means software BRK** — the natural state from fetch_opcode (which clears brk_flags for normal decode) now doubles as the software BRK indicator. Only hardware interrupts set nonzero flags (IRQ, NMI, RESET). This removes a state and a step.
 - **No dummy_read before push/pull/RTI** — fetch_opcode already outputs read(PC). The next micro-op simply ignores data_latch while doing productive work. The "dummy read" was an extra cycle that doesn't exist on real hardware.
+
+## 2026-04-08 — Eliminate unnecessary state writes; merge duplicate micro-ops
+
+### What we did
+- Added `read_zp` — reads from `data_latch` directly without storing to `base_addr`. Used by `zp_read` where base_addr isn't needed later.
+- Added `read_base_hi` — reads from `base_addr | (data_latch << 8)` without storing. Used by `abs_read` and `ind_x_read`.
+- Merged `write_zp_indexed`, `fixup_write` into `write_base` (all identical: `PC++; write(base_addr, store_value)`). Used by ZP indexed write, absolute indexed write, and (Indirect),Y write.
+- Eliminated `write_ind` — `ind_x_write` reuses `write_abs` directly (identical operation).
+- ~283 MHz release, Dormann test passes.

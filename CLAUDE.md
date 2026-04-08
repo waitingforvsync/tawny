@@ -60,7 +60,7 @@ Named after the tawny owl — the BBC Micro logo is a stylised owl made from dot
 - **`opcode_read` step** after write cycles — reads the next opcode from PC (since data_latch after a write contains the written value, not an opcode)
 - **Interrupts via forced BRK:** IRQ/NMI/RESET all use opcode $00's microcode, distinguished by `brk_flags` (0 = software BRK, nonzero = interrupt). No special opcode slots.
 - **ZST trait dispatch** for operations: each op is a zero-sized type (`ops::Lda`, `ops::Adc`, etc.) implementing a trait (`ReadOp`, `StoreOp`, `RmwOp`, `ImpliedOp`, `PushOp`, `PullOp`). Micro-ops are generic over the trait: `fetch_data::<ops::Lda>` monomorphises into a unique function pointer per operation, with compile-time enforcement that only valid ops are used with each addressing mode.
-- **Micro-ops return output directly** — no intermediate state fields on the CPU struct
+- **Micro-ops return output directly** — no intermediate state fields on the CPU struct. Read-only modes use stateless micro-ops (`read_zp`, `read_base_hi`) that skip writing to `base_addr`; write modes share `write_base` for the final store.
 - **Page cross detection** uses bit 8 of `base_addr` — the u16 result of `data_latch + index` naturally carries into bit 8 when a page boundary is crossed. No separate `page_crossed` field needed.
 - **All cycle counts match documented 6502 timings** — verified against reference for every addressing mode
 - **Known TODOs:** Interrupt handling needs testing

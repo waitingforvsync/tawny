@@ -36,7 +36,7 @@ const fn imm_read<OP: ops::ReadOp>() -> [MicroOp; 2] {
 }
 
 const fn zp_read<OP: ops::ReadOp>() -> [MicroOp; 3] {
-    [latch_to_base, fetch_data::<OP>, fetch_opcode]
+    [read_zp, fetch_data::<OP>, fetch_opcode]
 }
 
 const fn zp_write<OP: ops::StoreOp>() -> [MicroOp; 3] {
@@ -52,15 +52,15 @@ const fn zp_y_read<OP: ops::ReadOp>() -> [MicroOp; 4] {
 }
 
 const fn zp_x_write<OP: ops::StoreOp>() -> [MicroOp; 4] {
-    [index_zp_x, write_zp_indexed::<OP>, opcode_read, fetch_opcode]
+    [index_zp_x, write_base::<OP>, opcode_read, fetch_opcode]
 }
 
 const fn zp_y_write<OP: ops::StoreOp>() -> [MicroOp; 4] {
-    [index_zp_y, write_zp_indexed::<OP>, opcode_read, fetch_opcode]
+    [index_zp_y, write_base::<OP>, opcode_read, fetch_opcode]
 }
 
 const fn abs_read<OP: ops::ReadOp>() -> [MicroOp; 4] {
-    [fetch_addr_lo, latch_to_base_hi, fetch_data::<OP>, fetch_opcode]
+    [fetch_addr_lo, read_base_hi, fetch_data::<OP>, fetch_opcode]
 }
 
 const fn abs_write<OP: ops::StoreOp>() -> [MicroOp; 4] {
@@ -76,19 +76,19 @@ const fn abs_y_read<OP: ops::ReadOp>() -> [MicroOp; 5] {
 }
 
 const fn abs_x_write<OP: ops::StoreOp>() -> [MicroOp; 5] {
-    [fetch_addr_lo_x, fetch_addr_hi_indexed_penalty, fixup_write::<OP>, opcode_read, fetch_opcode]
+    [fetch_addr_lo_x, fetch_addr_hi_indexed_penalty, write_base::<OP>, opcode_read, fetch_opcode]
 }
 
 const fn abs_y_write<OP: ops::StoreOp>() -> [MicroOp; 5] {
-    [fetch_addr_lo_y, fetch_addr_hi_indexed_penalty, fixup_write::<OP>, opcode_read, fetch_opcode]
+    [fetch_addr_lo_y, fetch_addr_hi_indexed_penalty, write_base::<OP>, opcode_read, fetch_opcode]
 }
 
 const fn ind_x_read<OP: ops::ReadOp>() -> [MicroOp; 6] {
-    [index_zp_x, read_base, fetch_ind_lo, latch_to_base_hi, fetch_data::<OP>, fetch_opcode]
+    [index_zp_x, read_base, fetch_ind_lo, read_base_hi, fetch_data::<OP>, fetch_opcode]
 }
 
 const fn ind_x_write<OP: ops::StoreOp>() -> [MicroOp; 6] {
-    [index_zp_x, read_base, fetch_ind_lo, write_ind::<OP>, opcode_read, fetch_opcode]
+    [index_zp_x, read_base, fetch_ind_lo, write_abs::<OP>, opcode_read, fetch_opcode]
 }
 
 const fn ind_y_read<OP: ops::ReadOp>() -> [MicroOp; 6] {
@@ -96,7 +96,7 @@ const fn ind_y_read<OP: ops::ReadOp>() -> [MicroOp; 6] {
 }
 
 const fn ind_y_write<OP: ops::StoreOp>() -> [MicroOp; 6] {
-    [latch_to_base, fetch_ind_y_lo, fetch_addr_hi_indexed_penalty, fixup_write::<OP>, opcode_read, fetch_opcode]
+    [latch_to_base, fetch_ind_y_lo, fetch_addr_hi_indexed_penalty, write_base::<OP>, opcode_read, fetch_opcode]
 }
 
 const fn acc_rmw<OP: ops::RmwOp>() -> [MicroOp; 2] {

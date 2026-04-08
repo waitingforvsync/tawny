@@ -56,8 +56,15 @@ pub fn dummy_read(cpu: &mut Mos6502) -> Mos6502Output {
     read(cpu.pc)
 }
 
+/// Output: read(data_latch as ZP address). No state change.
+/// Used for ZP read modes where base_addr isn't needed later.
+pub fn read_zp(cpu: &mut Mos6502) -> Mos6502Output {
+    cpu.next_state();
+    read(cpu.data_latch as u16)
+}
+
 /// Save data_latch into base_addr. Output: read(base_addr).
-/// Used for ZP operand fetch and (Indirect),Y pointer fetch.
+/// Used when base_addr is needed by later steps (ZP indexed, (Indirect),Y, ZP RMW).
 pub fn latch_to_base(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.base_addr = cpu.data_latch as u16;
     cpu.next_state();
@@ -71,8 +78,15 @@ pub fn read_base(cpu: &mut Mos6502) -> Mos6502Output {
     read(cpu.base_addr)
 }
 
-/// Combine data_latch as high byte with base_addr low byte. Output: read(base_addr).
-/// Used for absolute addr high byte and (Indirect,X) target high byte.
+/// Combine data_latch as high byte with base_addr low byte. Output: read(full address).
+/// Does not store the result — used when base_addr isn't needed later (abs read, ind_x read).
+pub fn read_base_hi(cpu: &mut Mos6502) -> Mos6502Output {
+    cpu.next_state();
+    read(cpu.base_addr | (cpu.data_latch as u16) << 8)
+}
+
+/// Combine data_latch as high byte with base_addr low byte. Store in base_addr. Output: read(base_addr).
+/// Used when base_addr is needed by later steps (JMP (ind), abs RMW, ind_x write).
 pub fn latch_to_base_hi(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.base_addr |= (cpu.data_latch as u16) << 8;
     cpu.next_state();
@@ -172,8 +186,9 @@ pub fn add_index_y(cpu: &mut Mos6502) -> Mos6502Output {
     read(cpu.base_addr)
 }
 
-/// Consume dummy. Write register to indexed ZP address. PC++.
-pub fn write_zp_indexed<OP: StoreOp>(cpu: &mut Mos6502) -> Mos6502Output {
+/// Write register to base_addr. PC++.
+/// Used for ZP indexed write, absolute indexed write, and (Indirect),Y write.
+pub fn write_base<OP: StoreOp>(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.inc_pc();
     cpu.next_state();
     write(cpu.base_addr, OP::value(cpu))
@@ -245,12 +260,7 @@ pub fn fetch_addr_hi_indexed_penalty(cpu: &mut Mos6502) -> Mos6502Output {
     read(addr)
 }
 
-/// Consume dummy. Write to base_addr (with page cross fixup). PC++.
-pub fn fixup_write<OP: StoreOp>(cpu: &mut Mos6502) -> Mos6502Output {
-    cpu.inc_pc();
-    cpu.next_state();
-    write(cpu.base_addr, OP::value(cpu))
-}
+// fixup_write = write_base (same: write to base_addr, PC++)
 
 // ==========================================================================
 // (Indirect,X)
@@ -264,13 +274,7 @@ pub fn fetch_ind_lo(cpu: &mut Mos6502) -> Mos6502Output {
     read((ptr_lo.wrapping_add(1)) & 0x00FF)
 }
 
-/// Consume target high byte. Form target. Write. PC++.
-pub fn write_ind<OP: StoreOp>(cpu: &mut Mos6502) -> Mos6502Output {
-    cpu.base_addr |= (cpu.data_latch as u16) << 8;
-    cpu.inc_pc();
-    cpu.next_state();
-    write(cpu.base_addr, OP::value(cpu))
-}
+// write_ind = write_abs (same: merge high byte, write to base_addr, PC++)
 
 // ==========================================================================
 // (Indirect),Y
