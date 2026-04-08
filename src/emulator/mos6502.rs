@@ -10,6 +10,71 @@ pub const TABLE_SIZE: usize = 256 * MAX_STEPS;
 
 pub type MicroOp = fn(&mut Mos6502) -> Mos6502Output;
 
+// ======================================================================
+// Disassembly metadata
+// ======================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mnemonic {
+    Adc, And, Asl, Bcc, Bcs, Beq, Bit, Bmi, Bne, Bpl, Brk, Bvc, Bvs,
+    Clc, Cld, Cli, Clv, Cmp, Cpx, Cpy,
+    Dec, Dex, Dey,
+    Eor,
+    Inc, Inx, Iny,
+    Jmp, Jsr,
+    Lda, Ldx, Ldy, Lsr,
+    Nop,
+    Ora,
+    Pha, Php, Pla, Plp,
+    Rol, Ror, Rti, Rts,
+    Sbc, Sec, Sed, Sei, Sta, Stx, Sty,
+    Tax, Tay, Tsx, Txa, Txs, Tya,
+    Ill,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddrMode {
+    Implied,
+    Accumulator,
+    Immediate,
+    ZeroPage,
+    ZeroPageX,
+    ZeroPageY,
+    Absolute,
+    AbsoluteX,
+    AbsoluteY,
+    Indirect,
+    IndirectX,
+    IndirectY,
+    Relative,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpEntry {
+    pub mnemonic: Mnemonic,
+    pub addr_mode: AddrMode,
+}
+
+impl OpEntry {
+    pub const fn new(mnemonic: Mnemonic, addr_mode: AddrMode) -> Self {
+        Self { mnemonic, addr_mode }
+    }
+
+    /// Number of bytes for this instruction (1, 2, or 3).
+    pub const fn bytes(&self) -> u8 {
+        match self.addr_mode {
+            AddrMode::Implied | AddrMode::Accumulator => 1,
+            AddrMode::Immediate | AddrMode::ZeroPage | AddrMode::ZeroPageX
+            | AddrMode::ZeroPageY | AddrMode::IndirectX | AddrMode::IndirectY
+            | AddrMode::Relative => 2,
+            AddrMode::Absolute | AddrMode::AbsoluteX | AddrMode::AbsoluteY
+            | AddrMode::Indirect => 3,
+        }
+    }
+}
+
+const ILL_ENTRY: OpEntry = OpEntry::new(Mnemonic::Ill, AddrMode::Implied);
+
 pub const BRK_IRQ: u8 = 0x02;
 pub const BRK_NMI: u8 = 0x04;
 pub const BRK_RESET: u8 = 0x08;
@@ -138,4 +203,84 @@ pub(crate) fn sync_read(address: u16) -> Mos6502Output {
 #[inline(always)]
 pub(crate) fn write(address: u16, data: u8) -> Mos6502Output {
     Mos6502Output { address, data, rw: false, sync: false }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::table::DISASM;
+
+    #[test]
+    fn disasm_table_spot_check() {
+        // Every legal opcode should have a non-Ill mnemonic.
+        // Spot-check a representative sample across all addressing modes.
+        let cases: &[(u8, Mnemonic, AddrMode)] = &[
+            (0x00, Mnemonic::Brk, AddrMode::Implied),
+            (0x69, Mnemonic::Adc, AddrMode::Immediate),
+            (0xA5, Mnemonic::Lda, AddrMode::ZeroPage),
+            (0x85, Mnemonic::Sta, AddrMode::ZeroPage),
+            (0xB5, Mnemonic::Lda, AddrMode::ZeroPageX),
+            (0xB6, Mnemonic::Ldx, AddrMode::ZeroPageY),
+            (0x95, Mnemonic::Sta, AddrMode::ZeroPageX),
+            (0x96, Mnemonic::Stx, AddrMode::ZeroPageY),
+            (0xAD, Mnemonic::Lda, AddrMode::Absolute),
+            (0x8D, Mnemonic::Sta, AddrMode::Absolute),
+            (0xBD, Mnemonic::Lda, AddrMode::AbsoluteX),
+            (0xB9, Mnemonic::Lda, AddrMode::AbsoluteY),
+            (0x9D, Mnemonic::Sta, AddrMode::AbsoluteX),
+            (0x99, Mnemonic::Sta, AddrMode::AbsoluteY),
+            (0xA1, Mnemonic::Lda, AddrMode::IndirectX),
+            (0x81, Mnemonic::Sta, AddrMode::IndirectX),
+            (0xB1, Mnemonic::Lda, AddrMode::IndirectY),
+            (0x91, Mnemonic::Sta, AddrMode::IndirectY),
+            (0x0A, Mnemonic::Asl, AddrMode::Accumulator),
+            (0x06, Mnemonic::Asl, AddrMode::ZeroPage),
+            (0x0E, Mnemonic::Asl, AddrMode::Absolute),
+            (0x1E, Mnemonic::Asl, AddrMode::AbsoluteX),
+            (0xEA, Mnemonic::Nop, AddrMode::Implied),
+            (0xE8, Mnemonic::Inx, AddrMode::Implied),
+            (0x18, Mnemonic::Clc, AddrMode::Implied),
+            (0x90, Mnemonic::Bcc, AddrMode::Relative),
+            (0xF0, Mnemonic::Beq, AddrMode::Relative),
+            (0x4C, Mnemonic::Jmp, AddrMode::Absolute),
+            (0x6C, Mnemonic::Jmp, AddrMode::Indirect),
+            (0x20, Mnemonic::Jsr, AddrMode::Absolute),
+            (0x60, Mnemonic::Rts, AddrMode::Implied),
+            (0x40, Mnemonic::Rti, AddrMode::Implied),
+            (0x48, Mnemonic::Pha, AddrMode::Implied),
+            (0x08, Mnemonic::Php, AddrMode::Implied),
+            (0x68, Mnemonic::Pla, AddrMode::Implied),
+            (0x28, Mnemonic::Plp, AddrMode::Implied),
+        ];
+
+        for &(opcode, mnemonic, addr_mode) in cases {
+            let entry = DISASM[opcode as usize];
+            assert_eq!(entry.mnemonic, mnemonic,
+                "opcode ${:02X}: expected {:?}, got {:?}", opcode, mnemonic, entry.mnemonic);
+            assert_eq!(entry.addr_mode, addr_mode,
+                "opcode ${:02X}: expected {:?}, got {:?}", opcode, addr_mode, entry.addr_mode);
+        }
+    }
+
+    #[test]
+    fn disasm_table_illegal_opcodes_are_ill() {
+        // A few known illegal opcodes should be Ill.
+        for opcode in [0x02, 0x03, 0x04, 0x0B, 0x0C, 0x12, 0x22, 0x42, 0x62] {
+            assert_eq!(DISASM[opcode].mnemonic, Mnemonic::Ill,
+                "opcode ${:02X} should be Ill", opcode);
+        }
+    }
+
+    #[test]
+    fn disasm_table_byte_counts() {
+        // Spot-check instruction byte counts.
+        assert_eq!(DISASM[0xEA].bytes(), 1); // NOP — implied
+        assert_eq!(DISASM[0xA9].bytes(), 2); // LDA #imm
+        assert_eq!(DISASM[0xA5].bytes(), 2); // LDA zp
+        assert_eq!(DISASM[0xAD].bytes(), 3); // LDA abs
+        assert_eq!(DISASM[0x90].bytes(), 2); // BCC rel
+        assert_eq!(DISASM[0x0A].bytes(), 1); // ASL A
+        assert_eq!(DISASM[0x4C].bytes(), 3); // JMP abs
+        assert_eq!(DISASM[0x6C].bytes(), 3); // JMP (ind)
+    }
 }

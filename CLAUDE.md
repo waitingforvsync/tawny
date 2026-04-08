@@ -30,7 +30,7 @@ Named after the tawny owl — the BBC Micro logo is a stylised owl made from dot
     - `flags.rs` — Processor status flag bit constants
     - `ops.rs` — ALU/register operations via ZST types and traits
     - `addr.rs` — Addressing mode micro-op functions
-    - `table.rs` — Compile-time step table (256 opcodes × 8 steps)
+    - `table.rs` — Compile-time step table (256 opcodes × 8 steps) + disassembly table
   - `hd6845s.rs` — HD6845S CRT Controller (placeholder)
   - `vidproc.rs` — VLSI Video ULA (placeholder)
   - `r6522.rs` — R6522 VIA (placeholder)

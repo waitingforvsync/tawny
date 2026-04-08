@@ -5,6 +5,8 @@
 /// Micro-ops in `addr.rs` are generic over these traits, giving compile-time
 /// enforcement that only valid ops are used with each addressing mode.
 use super::flags::*;
+use super::Mnemonic;
+use super::Mnemonic as M;
 use super::Mos6502;
 
 // ======================================================================
@@ -12,26 +14,32 @@ use super::Mos6502;
 // ======================================================================
 
 pub trait ReadOp {
+    const MNEMONIC: Mnemonic;
     fn execute(cpu: &mut Mos6502, val: u8);
 }
 
 pub trait StoreOp {
+    const MNEMONIC: Mnemonic;
     fn value(cpu: &Mos6502) -> u8;
 }
 
 pub trait RmwOp {
+    const MNEMONIC: Mnemonic;
     fn execute(cpu: &mut Mos6502, val: u8) -> u8;
 }
 
 pub trait ImpliedOp {
+    const MNEMONIC: Mnemonic;
     fn execute(cpu: &mut Mos6502);
 }
 
 pub trait PushOp {
+    const MNEMONIC: Mnemonic;
     fn value(cpu: &Mos6502) -> u8;
 }
 
 pub trait PullOp {
+    const MNEMONIC: Mnemonic;
     fn execute(cpu: &mut Mos6502, val: u8);
 }
 
@@ -88,16 +96,19 @@ pub struct Plp;
 // ======================================================================
 
 impl ReadOp for Adc {
+    const MNEMONIC: Mnemonic = M::Adc;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) { adc(cpu, val); }
 }
 
 impl ReadOp for Sbc {
+    const MNEMONIC: Mnemonic = M::Sbc;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) { sbc(cpu, val); }
 }
 
 impl ReadOp for And {
+    const MNEMONIC: Mnemonic = M::And;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) {
         cpu.a &= val;
@@ -106,6 +117,7 @@ impl ReadOp for And {
 }
 
 impl ReadOp for Ora {
+    const MNEMONIC: Mnemonic = M::Ora;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) {
         cpu.a |= val;
@@ -114,6 +126,7 @@ impl ReadOp for Ora {
 }
 
 impl ReadOp for Eor {
+    const MNEMONIC: Mnemonic = M::Eor;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) {
         cpu.a ^= val;
@@ -122,21 +135,25 @@ impl ReadOp for Eor {
 }
 
 impl ReadOp for Cmp {
+    const MNEMONIC: Mnemonic = M::Cmp;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) { compare(cpu, cpu.a, val); }
 }
 
 impl ReadOp for Cpx {
+    const MNEMONIC: Mnemonic = M::Cpx;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) { compare(cpu, cpu.x, val); }
 }
 
 impl ReadOp for Cpy {
+    const MNEMONIC: Mnemonic = M::Cpy;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) { compare(cpu, cpu.y, val); }
 }
 
 impl ReadOp for Bit {
+    const MNEMONIC: Mnemonic = M::Bit;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) {
         cpu.set_flag(Z, (cpu.a & val) == 0);
@@ -146,6 +163,7 @@ impl ReadOp for Bit {
 }
 
 impl ReadOp for Lda {
+    const MNEMONIC: Mnemonic = M::Lda;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) {
         cpu.a = val;
@@ -154,6 +172,7 @@ impl ReadOp for Lda {
 }
 
 impl ReadOp for Ldx {
+    const MNEMONIC: Mnemonic = M::Ldx;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) {
         cpu.x = val;
@@ -162,6 +181,7 @@ impl ReadOp for Ldx {
 }
 
 impl ReadOp for Ldy {
+    const MNEMONIC: Mnemonic = M::Ldy;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) {
         cpu.y = val;
@@ -174,16 +194,19 @@ impl ReadOp for Ldy {
 // ======================================================================
 
 impl StoreOp for Sta {
+    const MNEMONIC: Mnemonic = M::Sta;
     #[inline(always)]
     fn value(cpu: &Mos6502) -> u8 { cpu.a }
 }
 
 impl StoreOp for Stx {
+    const MNEMONIC: Mnemonic = M::Stx;
     #[inline(always)]
     fn value(cpu: &Mos6502) -> u8 { cpu.x }
 }
 
 impl StoreOp for Sty {
+    const MNEMONIC: Mnemonic = M::Sty;
     #[inline(always)]
     fn value(cpu: &Mos6502) -> u8 { cpu.y }
 }
@@ -193,6 +216,7 @@ impl StoreOp for Sty {
 // ======================================================================
 
 impl RmwOp for Asl {
+    const MNEMONIC: Mnemonic = M::Asl;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) -> u8 {
         cpu.set_flag(C, val & 0x80 != 0);
@@ -203,6 +227,7 @@ impl RmwOp for Asl {
 }
 
 impl RmwOp for Lsr {
+    const MNEMONIC: Mnemonic = M::Lsr;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) -> u8 {
         cpu.set_flag(C, val & 0x01 != 0);
@@ -213,6 +238,7 @@ impl RmwOp for Lsr {
 }
 
 impl RmwOp for Rol {
+    const MNEMONIC: Mnemonic = M::Rol;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) -> u8 {
         let carry_in = cpu.p & C;
@@ -224,6 +250,7 @@ impl RmwOp for Rol {
 }
 
 impl RmwOp for Ror {
+    const MNEMONIC: Mnemonic = M::Ror;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) -> u8 {
         let carry_in = (cpu.p & C) << 7;
@@ -235,6 +262,7 @@ impl RmwOp for Ror {
 }
 
 impl RmwOp for Inc {
+    const MNEMONIC: Mnemonic = M::Inc;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) -> u8 {
         let result = val.wrapping_add(1);
@@ -244,6 +272,7 @@ impl RmwOp for Inc {
 }
 
 impl RmwOp for Dec {
+    const MNEMONIC: Mnemonic = M::Dec;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) -> u8 {
         let result = val.wrapping_sub(1);
@@ -257,6 +286,7 @@ impl RmwOp for Dec {
 // ======================================================================
 
 impl ImpliedOp for Inx {
+    const MNEMONIC: Mnemonic = M::Inx;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) {
         cpu.x = cpu.x.wrapping_add(1);
@@ -265,6 +295,7 @@ impl ImpliedOp for Inx {
 }
 
 impl ImpliedOp for Iny {
+    const MNEMONIC: Mnemonic = M::Iny;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) {
         cpu.y = cpu.y.wrapping_add(1);
@@ -273,6 +304,7 @@ impl ImpliedOp for Iny {
 }
 
 impl ImpliedOp for Dex {
+    const MNEMONIC: Mnemonic = M::Dex;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) {
         cpu.x = cpu.x.wrapping_sub(1);
@@ -281,6 +313,7 @@ impl ImpliedOp for Dex {
 }
 
 impl ImpliedOp for Dey {
+    const MNEMONIC: Mnemonic = M::Dey;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) {
         cpu.y = cpu.y.wrapping_sub(1);
@@ -289,6 +322,7 @@ impl ImpliedOp for Dey {
 }
 
 impl ImpliedOp for Tax {
+    const MNEMONIC: Mnemonic = M::Tax;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) {
         cpu.x = cpu.a;
@@ -297,6 +331,7 @@ impl ImpliedOp for Tax {
 }
 
 impl ImpliedOp for Tay {
+    const MNEMONIC: Mnemonic = M::Tay;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) {
         cpu.y = cpu.a;
@@ -305,6 +340,7 @@ impl ImpliedOp for Tay {
 }
 
 impl ImpliedOp for Txa {
+    const MNEMONIC: Mnemonic = M::Txa;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) {
         cpu.a = cpu.x;
@@ -313,6 +349,7 @@ impl ImpliedOp for Txa {
 }
 
 impl ImpliedOp for Tya {
+    const MNEMONIC: Mnemonic = M::Tya;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) {
         cpu.a = cpu.y;
@@ -321,6 +358,7 @@ impl ImpliedOp for Tya {
 }
 
 impl ImpliedOp for Tsx {
+    const MNEMONIC: Mnemonic = M::Tsx;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) {
         cpu.x = cpu.sp;
@@ -329,46 +367,55 @@ impl ImpliedOp for Tsx {
 }
 
 impl ImpliedOp for Txs {
+    const MNEMONIC: Mnemonic = M::Txs;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) { cpu.sp = cpu.x; }
 }
 
 impl ImpliedOp for Clc {
+    const MNEMONIC: Mnemonic = M::Clc;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) { cpu.p &= !C; }
 }
 
 impl ImpliedOp for Sec {
+    const MNEMONIC: Mnemonic = M::Sec;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) { cpu.p |= C; }
 }
 
 impl ImpliedOp for Cli {
+    const MNEMONIC: Mnemonic = M::Cli;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) { cpu.p &= !I; }
 }
 
 impl ImpliedOp for Sei {
+    const MNEMONIC: Mnemonic = M::Sei;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) { cpu.p |= I; }
 }
 
 impl ImpliedOp for Clv {
+    const MNEMONIC: Mnemonic = M::Clv;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) { cpu.p &= !V; }
 }
 
 impl ImpliedOp for Cld {
+    const MNEMONIC: Mnemonic = M::Cld;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) { cpu.p &= !D; }
 }
 
 impl ImpliedOp for Sed {
+    const MNEMONIC: Mnemonic = M::Sed;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502) { cpu.p |= D; }
 }
 
 impl ImpliedOp for Nop {
+    const MNEMONIC: Mnemonic = M::Nop;
     #[inline(always)]
     fn execute(_cpu: &mut Mos6502) {}
 }
@@ -378,11 +425,13 @@ impl ImpliedOp for Nop {
 // ======================================================================
 
 impl PushOp for Pha {
+    const MNEMONIC: Mnemonic = M::Pha;
     #[inline(always)]
     fn value(cpu: &Mos6502) -> u8 { cpu.a }
 }
 
 impl PushOp for Php {
+    const MNEMONIC: Mnemonic = M::Php;
     #[inline(always)]
     fn value(cpu: &Mos6502) -> u8 { cpu.p | B | U }
 }
@@ -392,6 +441,7 @@ impl PushOp for Php {
 // ======================================================================
 
 impl PullOp for Pla {
+    const MNEMONIC: Mnemonic = M::Pla;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) {
         cpu.a = val;
@@ -400,6 +450,7 @@ impl PullOp for Pla {
 }
 
 impl PullOp for Plp {
+    const MNEMONIC: Mnemonic = M::Plp;
     #[inline(always)]
     fn execute(cpu: &mut Mos6502, val: u8) {
         cpu.p = (val & !(B | U)) | U;

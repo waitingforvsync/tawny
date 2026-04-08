@@ -1,12 +1,26 @@
-/// Micro-op step table for all 6502 instructions.
+/// Micro-op step table and disassembly table for all 6502 instructions.
 ///
 /// Every instruction ends with `fetch_opcode`, which consumes the opcode
 /// byte from data_latch, decodes it, and sets tstate for the next instruction.
+///
+/// Each addressing mode generator returns an `OpSteps` containing both the
+/// micro-op steps and the disassembly metadata (mnemonic + addressing mode).
 use super::addr::*;
 use super::ops;
-use super::{MicroOp, TABLE_SIZE, MAX_STEPS};
+use super::{MicroOp, Mnemonic, AddrMode, OpEntry, ILL_ENTRY, TABLE_SIZE, MAX_STEPS};
 
-pub static STEPS: [MicroOp; TABLE_SIZE] = build_steps();
+use Mnemonic as M;
+use AddrMode as A;
+
+struct Tables {
+    steps: [MicroOp; TABLE_SIZE],
+    disasm: [OpEntry; 256],
+}
+
+static TABLES: Tables = build_tables();
+
+pub static STEPS: &[MicroOp; TABLE_SIZE] = &TABLES.steps;
+pub static DISASM: &[OpEntry; 256] = &TABLES.disasm;
 
 fn trap(cpu: &mut super::Mos6502) -> super::Mos6502Output {
     // Don't call cpu.next_state() — stay at the same tstate forever.
@@ -15,159 +29,268 @@ fn trap(cpu: &mut super::Mos6502) -> super::Mos6502Output {
 
 #[inline(always)]
 pub fn dispatch(cpu: &mut super::Mos6502) -> super::Mos6502Output {
-    STEPS[cpu.tstate as usize](cpu)
+    TABLES.steps[cpu.tstate as usize](cpu)
 }
 
-const fn set(table: &mut [MicroOp; TABLE_SIZE], opcode: usize, steps: &[MicroOp]) {
+// ======================================================================
+// OpSteps: micro-op steps + disassembly entry
+// ======================================================================
+
+struct OpSteps<const N: usize> {
+    steps: [MicroOp; N],
+    entry: OpEntry,
+}
+
+const fn set<const N: usize>(tables: &mut Tables, opcode: usize, op: &OpSteps<N>) {
     let base = opcode * MAX_STEPS;
     let mut i = 0;
-    while i < steps.len() {
-        table[base + i] = steps[i];
+    while i < N {
+        tables.steps[base + i] = op.steps[i];
         i += 1;
     }
+    tables.disasm[opcode] = op.entry;
 }
 
 // ======================================================================
 // Addressing mode generators
 // ======================================================================
 
-const fn imm_read<OP: ops::ReadOp>() -> [MicroOp; 2] {
-    [fetch_data::<OP>, fetch_opcode]
+const fn imm_read<OP: ops::ReadOp>() -> OpSteps<2> {
+    OpSteps {
+        steps: [fetch_data::<OP>, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::Immediate),
+    }
 }
 
-const fn zp_read<OP: ops::ReadOp>() -> [MicroOp; 3] {
-    [read_zp, fetch_data::<OP>, fetch_opcode]
+const fn zp_read<OP: ops::ReadOp>() -> OpSteps<3> {
+    OpSteps {
+        steps: [read_zp, fetch_data::<OP>, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::ZeroPage),
+    }
 }
 
-const fn zp_write<OP: ops::StoreOp>() -> [MicroOp; 3] {
-    [write_zp::<OP>, opcode_read, fetch_opcode]
+const fn zp_write<OP: ops::StoreOp>() -> OpSteps<3> {
+    OpSteps {
+        steps: [write_zp::<OP>, opcode_read, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::ZeroPage),
+    }
 }
 
-const fn zp_x_read<OP: ops::ReadOp>() -> [MicroOp; 4] {
-    [latch_to_base, add_index_x, fetch_data::<OP>, fetch_opcode]
+const fn zp_x_read<OP: ops::ReadOp>() -> OpSteps<4> {
+    OpSteps {
+        steps: [latch_to_base, add_index_x, fetch_data::<OP>, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::ZeroPageX),
+    }
 }
 
-const fn zp_y_read<OP: ops::ReadOp>() -> [MicroOp; 4] {
-    [latch_to_base, add_index_y, fetch_data::<OP>, fetch_opcode]
+const fn zp_y_read<OP: ops::ReadOp>() -> OpSteps<4> {
+    OpSteps {
+        steps: [latch_to_base, add_index_y, fetch_data::<OP>, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::ZeroPageY),
+    }
 }
 
-const fn zp_x_write<OP: ops::StoreOp>() -> [MicroOp; 4] {
-    [index_zp_x, write_base::<OP>, opcode_read, fetch_opcode]
+const fn zp_x_write<OP: ops::StoreOp>() -> OpSteps<4> {
+    OpSteps {
+        steps: [index_zp_x, write_base::<OP>, opcode_read, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::ZeroPageX),
+    }
 }
 
-const fn zp_y_write<OP: ops::StoreOp>() -> [MicroOp; 4] {
-    [index_zp_y, write_base::<OP>, opcode_read, fetch_opcode]
+const fn zp_y_write<OP: ops::StoreOp>() -> OpSteps<4> {
+    OpSteps {
+        steps: [index_zp_y, write_base::<OP>, opcode_read, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::ZeroPageY),
+    }
 }
 
-const fn abs_read<OP: ops::ReadOp>() -> [MicroOp; 4] {
-    [fetch_addr_lo, read_base_hi, fetch_data::<OP>, fetch_opcode]
+const fn abs_read<OP: ops::ReadOp>() -> OpSteps<4> {
+    OpSteps {
+        steps: [fetch_addr_lo, read_base_hi, fetch_data::<OP>, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::Absolute),
+    }
 }
 
-const fn abs_write<OP: ops::StoreOp>() -> [MicroOp; 4] {
-    [fetch_addr_lo, write_abs::<OP>, opcode_read, fetch_opcode]
+const fn abs_write<OP: ops::StoreOp>() -> OpSteps<4> {
+    OpSteps {
+        steps: [fetch_addr_lo, write_abs::<OP>, opcode_read, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::Absolute),
+    }
 }
 
-const fn abs_x_read<OP: ops::ReadOp>() -> [MicroOp; 5] {
-    [fetch_addr_lo_x, fetch_addr_hi_indexed, read_base, fetch_data::<OP>, fetch_opcode]
+const fn abs_x_read<OP: ops::ReadOp>() -> OpSteps<5> {
+    OpSteps {
+        steps: [fetch_addr_lo_x, fetch_addr_hi_indexed, read_base, fetch_data::<OP>, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::AbsoluteX),
+    }
 }
 
-const fn abs_y_read<OP: ops::ReadOp>() -> [MicroOp; 5] {
-    [fetch_addr_lo_y, fetch_addr_hi_indexed, read_base, fetch_data::<OP>, fetch_opcode]
+const fn abs_y_read<OP: ops::ReadOp>() -> OpSteps<5> {
+    OpSteps {
+        steps: [fetch_addr_lo_y, fetch_addr_hi_indexed, read_base, fetch_data::<OP>, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::AbsoluteY),
+    }
 }
 
-const fn abs_x_write<OP: ops::StoreOp>() -> [MicroOp; 5] {
-    [fetch_addr_lo_x, fetch_addr_hi_indexed_penalty, write_base::<OP>, opcode_read, fetch_opcode]
+const fn abs_x_write<OP: ops::StoreOp>() -> OpSteps<5> {
+    OpSteps {
+        steps: [fetch_addr_lo_x, fetch_addr_hi_indexed_penalty, write_base::<OP>, opcode_read, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::AbsoluteX),
+    }
 }
 
-const fn abs_y_write<OP: ops::StoreOp>() -> [MicroOp; 5] {
-    [fetch_addr_lo_y, fetch_addr_hi_indexed_penalty, write_base::<OP>, opcode_read, fetch_opcode]
+const fn abs_y_write<OP: ops::StoreOp>() -> OpSteps<5> {
+    OpSteps {
+        steps: [fetch_addr_lo_y, fetch_addr_hi_indexed_penalty, write_base::<OP>, opcode_read, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::AbsoluteY),
+    }
 }
 
-const fn ind_x_read<OP: ops::ReadOp>() -> [MicroOp; 6] {
-    [index_zp_x, read_base, fetch_ind_lo, read_base_hi, fetch_data::<OP>, fetch_opcode]
+const fn ind_x_read<OP: ops::ReadOp>() -> OpSteps<6> {
+    OpSteps {
+        steps: [index_zp_x, read_base, fetch_ind_lo, read_base_hi, fetch_data::<OP>, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::IndirectX),
+    }
 }
 
-const fn ind_x_write<OP: ops::StoreOp>() -> [MicroOp; 6] {
-    [index_zp_x, read_base, fetch_ind_lo, write_abs::<OP>, opcode_read, fetch_opcode]
+const fn ind_x_write<OP: ops::StoreOp>() -> OpSteps<6> {
+    OpSteps {
+        steps: [index_zp_x, read_base, fetch_ind_lo, write_abs::<OP>, opcode_read, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::IndirectX),
+    }
 }
 
-const fn ind_y_read<OP: ops::ReadOp>() -> [MicroOp; 6] {
-    [latch_to_base, fetch_ind_y_lo, fetch_addr_hi_indexed, read_base, fetch_data::<OP>, fetch_opcode]
+const fn ind_y_read<OP: ops::ReadOp>() -> OpSteps<6> {
+    OpSteps {
+        steps: [latch_to_base, fetch_ind_y_lo, fetch_addr_hi_indexed, read_base, fetch_data::<OP>, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::IndirectY),
+    }
 }
 
-const fn ind_y_write<OP: ops::StoreOp>() -> [MicroOp; 6] {
-    [latch_to_base, fetch_ind_y_lo, fetch_addr_hi_indexed_penalty, write_base::<OP>, opcode_read, fetch_opcode]
+const fn ind_y_write<OP: ops::StoreOp>() -> OpSteps<6> {
+    OpSteps {
+        steps: [latch_to_base, fetch_ind_y_lo, fetch_addr_hi_indexed_penalty, write_base::<OP>, opcode_read, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::IndirectY),
+    }
 }
 
-const fn acc_rmw<OP: ops::RmwOp>() -> [MicroOp; 2] {
-    [accumulator::<OP>, fetch_opcode]
+const fn acc_rmw<OP: ops::RmwOp>() -> OpSteps<2> {
+    OpSteps {
+        steps: [accumulator::<OP>, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::Accumulator),
+    }
 }
 
-const fn zp_rmw<OP: ops::RmwOp>() -> [MicroOp; 5] {
-    [latch_to_base, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode]
+const fn zp_rmw<OP: ops::RmwOp>() -> OpSteps<5> {
+    OpSteps {
+        steps: [latch_to_base, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::ZeroPage),
+    }
 }
 
-const fn zp_x_rmw<OP: ops::RmwOp>() -> [MicroOp; 6] {
-    [index_zp_x, read_base, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode]
+const fn zp_x_rmw<OP: ops::RmwOp>() -> OpSteps<6> {
+    OpSteps {
+        steps: [index_zp_x, read_base, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::ZeroPageX),
+    }
 }
 
-const fn abs_rmw<OP: ops::RmwOp>() -> [MicroOp; 6] {
-    [fetch_addr_lo, latch_to_base_hi, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode]
+const fn abs_rmw<OP: ops::RmwOp>() -> OpSteps<6> {
+    OpSteps {
+        steps: [fetch_addr_lo, latch_to_base_hi, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::Absolute),
+    }
 }
 
-const fn abs_x_rmw<OP: ops::RmwOp>() -> [MicroOp; 7] {
-    [fetch_addr_lo_x, fetch_addr_hi_indexed_penalty, read_base, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode]
+const fn abs_x_rmw<OP: ops::RmwOp>() -> OpSteps<7> {
+    OpSteps {
+        steps: [fetch_addr_lo_x, fetch_addr_hi_indexed_penalty, read_base, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::AbsoluteX),
+    }
 }
 
-const fn imp<OP: ops::ImpliedOp>() -> [MicroOp; 2] {
-    [implied::<OP>, fetch_opcode]
+const fn imp<OP: ops::ImpliedOp>() -> OpSteps<2> {
+    OpSteps {
+        steps: [implied::<OP>, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::Implied),
+    }
 }
 
-const fn branch_op<const FLAG: u8, const SET: bool>() -> [MicroOp; 4] {
-    [branch::<FLAG, SET>, branch_take, opcode_read, fetch_opcode]
+const fn branch_op<const FLAG: u8, const SET: bool>(mnemonic: Mnemonic) -> OpSteps<4> {
+    OpSteps {
+        steps: [branch::<FLAG, SET>, branch_take, opcode_read, fetch_opcode],
+        entry: OpEntry::new(mnemonic, A::Relative),
+    }
 }
 
-const fn push<OP: ops::PushOp>() -> [MicroOp; 3] {
-    [stack_push::<OP>, opcode_read, fetch_opcode]
+const fn push<OP: ops::PushOp>() -> OpSteps<3> {
+    OpSteps {
+        steps: [stack_push::<OP>, opcode_read, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::Implied),
+    }
 }
 
-const fn pull<OP: ops::PullOp>() -> [MicroOp; 4] {
-    [inc_sp_read_stack, pull_read, stack_pull::<OP>, fetch_opcode]
+const fn pull<OP: ops::PullOp>() -> OpSteps<4> {
+    OpSteps {
+        steps: [inc_sp_read_stack, pull_read, stack_pull::<OP>, fetch_opcode],
+        entry: OpEntry::new(OP::MNEMONIC, A::Implied),
+    }
 }
 
-const fn brk() -> [MicroOp; 7] {
-    [brk_push_pch, brk_push_pcl, brk_push_p,
-     brk_vector_lo, brk_read_vector_lo, latch_to_pc, fetch_opcode]
+const fn brk() -> OpSteps<7> {
+    OpSteps {
+        steps: [brk_push_pch, brk_push_pcl, brk_push_p,
+                brk_vector_lo, brk_read_vector_lo, latch_to_pc, fetch_opcode],
+        entry: OpEntry::new(M::Brk, A::Implied),
+    }
 }
 
-const fn jmp_abs() -> [MicroOp; 3] {
-    [fetch_addr_lo, latch_to_pc, fetch_opcode]
+const fn jmp_abs() -> OpSteps<3> {
+    OpSteps {
+        steps: [fetch_addr_lo, latch_to_pc, fetch_opcode],
+        entry: OpEntry::new(M::Jmp, A::Absolute),
+    }
 }
 
-const fn jmp_ind() -> [MicroOp; 5] {
-    [fetch_addr_lo, latch_to_base_hi, jmp_ind_lo, latch_to_pc, fetch_opcode]
+const fn jmp_ind() -> OpSteps<5> {
+    OpSteps {
+        steps: [fetch_addr_lo, latch_to_base_hi, jmp_ind_lo, latch_to_pc, fetch_opcode],
+        entry: OpEntry::new(M::Jmp, A::Indirect),
+    }
 }
 
-const fn jsr() -> [MicroOp; 6] {
-    [jsr_save_lo, jsr_push_pch, jsr_push_pcl, dummy_read, latch_to_pc, fetch_opcode]
+const fn jsr() -> OpSteps<6> {
+    OpSteps {
+        steps: [jsr_save_lo, jsr_push_pch, jsr_push_pcl, dummy_read, latch_to_pc, fetch_opcode],
+        entry: OpEntry::new(M::Jsr, A::Absolute),
+    }
 }
 
-const fn rts() -> [MicroOp; 6] {
-    [dummy_read, inc_sp_read_stack, inc_sp_read_stack,
-     latch_to_base_read_stack, rts_read_pch, fetch_opcode]
+const fn rts() -> OpSteps<6> {
+    OpSteps {
+        steps: [dummy_read, inc_sp_read_stack, inc_sp_read_stack,
+                latch_to_base_read_stack, rts_read_pch, fetch_opcode],
+        entry: OpEntry::new(M::Rts, A::Implied),
+    }
 }
 
-const fn rti() -> [MicroOp; 6] {
-    [inc_sp_read_stack, inc_sp_read_stack, rti_read_p,
-     latch_to_base_read_stack, latch_to_pc, fetch_opcode]
+const fn rti() -> OpSteps<6> {
+    OpSteps {
+        steps: [inc_sp_read_stack, inc_sp_read_stack, rti_read_p,
+                latch_to_base_read_stack, latch_to_pc, fetch_opcode],
+        entry: OpEntry::new(M::Rti, A::Implied),
+    }
 }
 
 // ======================================================================
 // Table builder
 // ======================================================================
 
-const fn build_steps() -> [MicroOp; TABLE_SIZE] {
-    let mut t = [trap as MicroOp; TABLE_SIZE];
+const fn build_tables() -> Tables {
+    let mut t = Tables {
+        steps: [trap as MicroOp; TABLE_SIZE],
+        disasm: [ILL_ENTRY; 256],
+    };
 
     // BRK ($00) — also handles IRQ, NMI, RESET via brk_flags.
     set(&mut t, 0x00, &brk());
@@ -353,14 +476,14 @@ const fn build_steps() -> [MicroOp; TABLE_SIZE] {
 
     // --- Branches ---
     use super::flags;
-    set(&mut t, 0x90, &branch_op::<{flags::C}, false>());
-    set(&mut t, 0xB0, &branch_op::<{flags::C}, true>());
-    set(&mut t, 0xF0, &branch_op::<{flags::Z}, true>());
-    set(&mut t, 0xD0, &branch_op::<{flags::Z}, false>());
-    set(&mut t, 0x30, &branch_op::<{flags::N}, true>());
-    set(&mut t, 0x10, &branch_op::<{flags::N}, false>());
-    set(&mut t, 0x70, &branch_op::<{flags::V}, true>());
-    set(&mut t, 0x50, &branch_op::<{flags::V}, false>());
+    set(&mut t, 0x90, &branch_op::<{flags::C}, false>(M::Bcc));
+    set(&mut t, 0xB0, &branch_op::<{flags::C}, true>(M::Bcs));
+    set(&mut t, 0xF0, &branch_op::<{flags::Z}, true>(M::Beq));
+    set(&mut t, 0xD0, &branch_op::<{flags::Z}, false>(M::Bne));
+    set(&mut t, 0x30, &branch_op::<{flags::N}, true>(M::Bmi));
+    set(&mut t, 0x10, &branch_op::<{flags::N}, false>(M::Bpl));
+    set(&mut t, 0x70, &branch_op::<{flags::V}, true>(M::Bvs));
+    set(&mut t, 0x50, &branch_op::<{flags::V}, false>(M::Bvc));
 
     // --- JMP ---
     set(&mut t, 0x4C, &jmp_abs());

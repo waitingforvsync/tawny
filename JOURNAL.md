@@ -208,3 +208,20 @@
 - Eliminated `write_ind` — `ind_x_write` reuses `write_abs` directly (identical operation).
 - Added named generators for all remaining inline step arrays: `brk()`, `jmp_abs()`, `jmp_ind()`, `jsr()`, `rts()`, `rti()`. Every opcode in the table now uses a named generator function.
 - ~283 MHz release, Dormann test passes.
+
+## 2026-04-08 — Disassembly table from addressing mode generators
+
+### What we did
+- Added `Mnemonic` enum (56 variants + `Ill`) and `AddrMode` enum (13 variants) to `mos6502.rs`.
+- Added `OpEntry` struct with `mnemonic`, `addr_mode`, and a `bytes()` helper.
+- Added `const MNEMONIC: Mnemonic` to all six op traits (`ReadOp`, `StoreOp`, `RmwOp`, `ImpliedOp`, `PushOp`, `PullOp`) and all implementations.
+- Addressing mode generators now return `OpSteps<N>` containing both the micro-op step array and an `OpEntry`. The `set` function populates both the step table and a parallel `[OpEntry; 256]` disassembly table at compile time.
+- Branch generators take an explicit `Mnemonic` parameter since branch mnemonics (BCC, BCS, etc.) aren't derivable from a trait.
+- Both tables live in a single `Tables` struct built by `build_tables()`.
+- Added three unit tests: spot-check of 36 opcodes, illegal opcode check, and byte count verification.
+- ~287 MHz release, all tests pass.
+
+### Design decisions
+- **`MNEMONIC` on traits, not on ZSTs** — the mnemonic is associated with the trait impl, not the type itself, because some types implement multiple traits (though none do currently). This keeps the door open.
+- **`OpSteps<const N: usize>`** — const generic struct lets `set` work with any step count. Each generator returns a concrete `OpSteps<2>` through `OpSteps<7>`.
+- **`Ill` mnemonic for illegal opcodes** — uninitialised slots default to `ILL_ENTRY`, making it safe to index with any opcode byte.
