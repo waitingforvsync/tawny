@@ -225,3 +225,33 @@
 - **`MNEMONIC` on traits, not on ZSTs** — the mnemonic is associated with the trait impl, not the type itself, because some types implement multiple traits (though none do currently). This keeps the door open.
 - **`OpSteps<const N: usize>`** — const generic struct lets `set` work with any step count. Each generator returns a concrete `OpSteps<2>` through `OpSteps<7>`.
 - **`Ill` mnemonic for illegal opcodes** — uninitialised slots default to `ILL_ENTRY`, making it safe to index with any opcode byte.
+
+## 2026-04-09 — Dormann test suite expansion; set_pc
+
+### What we did
+- Added `Mos6502::set_pc(pc, opcode)` — starts execution at an arbitrary address by feeding the opcode into `fetch_opcode` directly. Eliminates the reset vector patching hack.
+- Reassembled all Dormann test binaries from ca65 sources (from `6502_65C02_functional_tests/ca65`).
+- Added decimal mode test (`dormann_decimal.rs`) — passes.
+- Added interrupt test (`dormann_interrupt.rs`) — currently `#[ignore]` due to known interrupt handling bugs.
+- Split tests into separate files with a shared `helpers/mod.rs` for the `run_to_trap` harness.
+- Removed the old `dormann.rs` combined test file.
+
+### Test results
+- Functional test: 96M cycles, ~305 MHz
+- Decimal test: 26M cycles, ~269 MHz
+- Interrupt test: initially failed — see below
+
+## 2026-04-09 — Fix interrupt pipeline timing; all Dormann tests pass
+
+### What we did
+- Replaced `irq_latch: bool` and `nmi_latch: bool` with shift registers (`irq_shift: u8`, `nmi_shift: u8`) to model the 3-phi2 pipeline delay from the real 6502.
+- phi2 shifts in `irq & !I_flag` to `irq_shift`, edge-detects NMI into `nmi_pending`, and shifts `nmi_pending` into `nmi_shift`.
+- `fetch_opcode` checks bit 2 (`& 0x04`) of each shift register — this corresponds to the signal state 3 phi2 cycles ago, matching the Visual 6502 trace.
+- Fixed spurious NMI in interrupt test caused by ROM fill ($FF) at the feedback register address ($BFFC) — harness now clears it before starting.
+- All three Dormann tests now pass: functional, decimal, and interrupt.
+
+### Design decisions
+- **Shift registers, not booleans** — the real 6502 has a multi-stage pipeline for interrupt detection. A boolean latch can't model the delay correctly. The shift register naturally captures the pipeline depth.
+- **Bit 2 = 3 phi2 delay** — fetch_opcode runs at phi1 of T2. An IRQ sampled at phi2 of cycle N needs 3 more phi2 shifts (N+1, N+2, N+3) before fetch_opcode at phi1 of cycle N+3 checks it. Bit 2 after 3 left-shifts is correct.
+- **NMI edge detection then pipeline** — `nmi_pending` latches on the rising edge and stays set until serviced. It's fed through `nmi_shift` so the same pipeline delay applies.
+- **Feedback register initialisation** — the Dormann interrupt test uses a memory-mapped feedback register at $BFFC. ROM fill ($FF) would assert NMI on the first cycle, so the harness clears it.

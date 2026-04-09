@@ -11,7 +11,7 @@ Named after the tawny owl — the BBC Micro logo is a stylised owl made from dot
 - Favour value semantics where there's no big performance penalty, avoid mutable variables
 - Write tests where appropriate, ensure they pass
 - Keep CLAUDE.md and JOURNAL.md up to date
-- Never commit to git without user review and approval
+- Never commit or push to git without explicit user approval — always wait for the user to review changes first, even when asked to "update docs, commit and push" in a single request. Present the changes for review before executing git commands.
 
 ## Tech stack
 - **Language:** Rust (edition 2024)
@@ -63,7 +63,7 @@ Named after the tawny owl — the BBC Micro logo is a stylised owl made from dot
 - **Micro-ops return output directly** — no intermediate state fields on the CPU struct. Read-only modes use stateless micro-ops (`read_zp`, `read_base_hi`) that skip writing to `base_addr`; write modes share `write_base` for the final store.
 - **Page cross detection** uses bit 8 of `base_addr` — the u16 result of `data_latch + index` naturally carries into bit 8 when a page boundary is crossed. No separate `page_crossed` field needed.
 - **All cycle counts match documented 6502 timings** — verified against reference for every addressing mode
-- **Known TODOs:** Interrupt handling needs testing
+- **Interrupt pipeline:** IRQ and NMI use shift registers (`irq_shift`, `nmi_shift`) to model the 3-phi2 pipeline delay. `fetch_opcode` checks bit 2 (the value from 3 phi2s ago). NMI is edge-detected (`nmi_prev` → `nmi_pending`) then fed through the same pipeline. Passes Dormann interrupt test.
 - **Visual 6502 reference** http://www.visual6502.org/JSSim/expert.html?graphics=false&steps=40&a=0000&d=58a5088509a50aea69674240&a=FFFE&d=0b00&r=0000&loglevel=3&logmore=idl,irq,sync,abl,abh&irq0=19
 ```
 cycle	ab	db	rw	Fetch	pc	a	x	y	s	p	Execute	State	ir	tcstate	pd	idl	irq	sync	abl	abh

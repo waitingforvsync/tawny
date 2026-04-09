@@ -18,11 +18,11 @@ use super::{read, sync_read, write, Mos6502, Mos6502Output,
 /// Consume opcode from data_latch. Check interrupts. Set tstate. PC++.
 /// Output: read(PC). Always the last step of every instruction.
 pub fn fetch_opcode(cpu: &mut Mos6502) -> Mos6502Output {
-    if cpu.nmi_pending {
+    if cpu.nmi_shift & 0x04 != 0 {
         cpu.nmi_pending = false;
         cpu.brk_flags = BRK_NMI;
         cpu.tstate = 0;
-    } else if cpu.irq_latch && (cpu.p & I) == 0 {
+    } else if cpu.irq_shift & 0x04 != 0 {
         cpu.brk_flags = BRK_IRQ;
         cpu.tstate = 0;
     } else {
