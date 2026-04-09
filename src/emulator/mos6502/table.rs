@@ -183,28 +183,28 @@ const fn acc_rmw<OP: ops::RmwOp>() -> OpSteps<2> {
 
 const fn zp_rmw<OP: ops::RmwOp>() -> OpSteps<5> {
     OpSteps {
-        steps: [latch_to_base, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode],
+        steps: [latch_to_base, rmw_dummy_write, rmw_execute::<OP>, opcode_read, fetch_opcode],
         entry: OpEntry::new(OP::MNEMONIC, A::ZeroPage),
     }
 }
 
 const fn zp_x_rmw<OP: ops::RmwOp>() -> OpSteps<6> {
     OpSteps {
-        steps: [index_zp_x, read_base, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode],
+        steps: [index_zp_x, read_base, rmw_dummy_write, rmw_execute::<OP>, opcode_read, fetch_opcode],
         entry: OpEntry::new(OP::MNEMONIC, A::ZeroPageX),
     }
 }
 
 const fn abs_rmw<OP: ops::RmwOp>() -> OpSteps<6> {
     OpSteps {
-        steps: [fetch_addr_lo, latch_to_base_hi, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode],
+        steps: [fetch_addr_lo, latch_to_base_hi, rmw_dummy_write, rmw_execute::<OP>, opcode_read, fetch_opcode],
         entry: OpEntry::new(OP::MNEMONIC, A::Absolute),
     }
 }
 
 const fn abs_x_rmw<OP: ops::RmwOp>() -> OpSteps<7> {
     OpSteps {
-        steps: [fetch_addr_lo_x, fetch_addr_hi_indexed_penalty, read_base, rmw_modify::<OP>, rmw_write, opcode_read, fetch_opcode],
+        steps: [fetch_addr_lo_x, fetch_addr_hi_indexed_penalty, read_base, rmw_dummy_write, rmw_execute::<OP>, opcode_read, fetch_opcode],
         entry: OpEntry::new(OP::MNEMONIC, A::AbsoluteX),
     }
 }

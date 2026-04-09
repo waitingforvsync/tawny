@@ -19,7 +19,7 @@ use super::{read, sync_read, write, Mos6502, Mos6502Output,
 /// Output: read(PC). Always the last step of every instruction.
 pub fn fetch_opcode(cpu: &mut Mos6502) -> Mos6502Output {
     if cpu.nmi_shift & 0x04 != 0 {
-        cpu.nmi_pending = false;
+        cpu.nmi_shift &= !1; // clear pending latch (bit 0)
         cpu.brk_flags = BRK_NMI;
         cpu.tstate = 0;
     } else if cpu.irq_shift & 0x04 != 0 {
@@ -295,19 +295,19 @@ pub fn fetch_ind_y_lo(cpu: &mut Mos6502) -> Mos6502Output {
 // Read-modify-write
 // ==========================================================================
 
-/// Consume value from memory. Dummy write original. Compute modified. PC++.
-pub fn rmw_modify<OP: RmwOp>(cpu: &mut Mos6502) -> Mos6502Output {
-    let original = cpu.data_latch;
-    cpu.rmw_result = OP::execute(cpu, original);
+/// Dummy-write original value back to base_addr. PC++.
+pub fn rmw_dummy_write(cpu: &mut Mos6502) -> Mos6502Output {
     cpu.inc_pc();
     cpu.next_state();
-    write(cpu.base_addr, original)
+    write(cpu.base_addr, cpu.data_latch)
 }
 
-/// Write modified value to base_addr.
-pub fn rmw_write(cpu: &mut Mos6502) -> Mos6502Output {
+/// Execute RMW op on data_latch (the original value, re-latched from dummy write).
+/// Write modified result to base_addr.
+pub fn rmw_execute<OP: RmwOp>(cpu: &mut Mos6502) -> Mos6502Output {
+    let result = OP::execute(cpu, cpu.data_latch);
     cpu.next_state();
-    write(cpu.base_addr, cpu.rmw_result)
+    write(cpu.base_addr, result)
 }
 
 // ==========================================================================

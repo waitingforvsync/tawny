@@ -255,3 +255,11 @@
 - **Bit 2 = 3 phi2 delay** — fetch_opcode runs at phi1 of T2. An IRQ sampled at phi2 of cycle N needs 3 more phi2 shifts (N+1, N+2, N+3) before fetch_opcode at phi1 of cycle N+3 checks it. Bit 2 after 3 left-shifts is correct.
 - **NMI edge detection then pipeline** — `nmi_pending` latches on the rising edge and stays set until serviced. It's fed through `nmi_shift` so the same pipeline delay applies.
 - **Feedback register initialisation** — the Dormann interrupt test uses a memory-mapped feedback register at $BFFC. ROM fill ($FF) would assert NMI on the first cycle, so the harness clears it.
+
+## 2026-04-09 — Eliminate rmw_result and nmi_pending fields
+
+### What we did
+- Removed `rmw_result` field. RMW ops now split into `rmw_dummy_write` (writes original back, PC++) and `rmw_execute::<OP>` (executes op on data_latch, writes result). The original value survives in data_latch because phi2 re-latches it from the dummy write.
+- Removed `nmi_pending` field. Bit 0 of `nmi_shift` now acts as a sticky pending latch — set on NMI rising edge, propagated on each shift via `(nmi_shift & 1)`, cleared by fetch_opcode when the NMI is serviced.
+- Mos6502 struct reduced from 15 to 13 fields.
+- ~289 MHz median (up from ~272 before nmi_pending removal).
