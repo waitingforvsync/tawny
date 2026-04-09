@@ -109,8 +109,10 @@ pub struct Mos6502 {
 
     // --- Interrupt state ---
     brk_flags: u8,
-    irq_shift: u8,     // IRQ pipeline shift register (bit 2 checked at fetch_opcode)
-    nmi_shift: u8,     // NMI pipeline: bit 0 = pending latch, bit 2 checked at fetch_opcode
+    /// Combined IRQ/NMI pipeline shift register. Shifts left by 2 each phi2.
+    /// Even bits = IRQ (bit 4 checked at fetch_opcode).
+    /// Odd bits = NMI (bit 5 checked; bit 1 = sticky pending latch).
+    int_shift: u16,
     nmi_prev: bool,    // previous NMI input level for edge detection
 }
 
@@ -129,8 +131,7 @@ impl Mos6502 {
             data_latch: 0,
             base_addr: 0,
 
-            irq_shift: 0,
-            nmi_shift: 0,
+            int_shift: 0,
             nmi_prev: false,
         }
     }
@@ -144,13 +145,13 @@ impl Mos6502 {
     pub fn phi2(&mut self, input: &Mos6502Input) {
         self.data_latch = input.data;
 
-        // IRQ pipeline: shift in (irq active AND interrupts enabled).
-        self.irq_shift = (self.irq_shift << 1) | (input.irq && (self.p & I) == 0) as u8;
-
-        // NMI pipeline: bit 0 is the pending latch, set on rising edge.
-        // Shift upper bits, preserve bit 0 (sticky), OR in new edge.
-        let edge = input.nmi && !self.nmi_prev;
-        self.nmi_shift = (self.nmi_shift << 1) | (self.nmi_shift & 1) | edge as u8;
+        // Combined IRQ/NMI pipeline: shift left by 2, insert new bits.
+        // Bit 0 = IRQ, bit 1 = NMI (sticky latch in bit 1).
+        let irq_bit = (input.irq && (self.p & I) == 0) as u16;
+        let nmi_edge = (input.nmi && !self.nmi_prev) as u16;
+        self.int_shift = (self.int_shift << 2)
+            | irq_bit
+            | ((self.int_shift & 0x02) | (nmi_edge << 1));
         self.nmi_prev = input.nmi;
     }
 
