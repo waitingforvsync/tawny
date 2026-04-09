@@ -91,6 +91,29 @@ pub struct Php;
 pub struct Pla;
 pub struct Plp;
 
+// --- Illegal operation types ---
+pub struct Slo; // ASL + ORA
+pub struct Rla; // ROL + AND
+pub struct Sre; // LSR + EOR
+pub struct Rra; // ROR + ADC
+pub struct Dcp; // DEC + CMP
+pub struct Isc; // INC + SBC
+pub struct Lax; // LDA + LDX
+pub struct Sax; // store A & X
+pub struct Anc; // AND + set C from bit 7
+pub struct Alr; // AND + LSR
+pub struct Arr; // AND + ROR (unusual flags)
+pub struct Ane; // (A | magic) & X & M (unstable)
+pub struct Lxa; // (A | magic) & M → A, X (unstable)
+pub struct Axs; // X = (A & X) - M (no borrow)
+pub struct Usbc; // = SBC
+pub struct Sha; // store A & X & (addr_hi + 1) (unstable)
+pub struct Shx; // store X & (addr_hi + 1) (unstable)
+pub struct Shy; // store Y & (addr_hi + 1) (unstable)
+pub struct Tas; // SP = A & X, store A & X & (addr_hi + 1) (unstable)
+pub struct Las; // A = X = SP = M & SP
+pub struct Nrd; // no-op read (illegal NOP with operand)
+
 // ======================================================================
 // ReadOp implementations
 // ======================================================================
@@ -455,6 +478,231 @@ impl PullOp for Plp {
     fn execute(cpu: &mut Mos6502, val: u8) {
         cpu.p = (val & !(B | U)) | U;
     }
+}
+
+// ======================================================================
+// Illegal RMW combo ops
+// ======================================================================
+
+impl RmwOp for Slo {
+    const MNEMONIC: Mnemonic = M::Slo;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) -> u8 {
+        let result = Asl::execute(cpu, val);
+        cpu.a |= result;
+        cpu.set_nz(cpu.a);
+        result
+    }
+}
+
+impl RmwOp for Rla {
+    const MNEMONIC: Mnemonic = M::Rla;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) -> u8 {
+        let result = Rol::execute(cpu, val);
+        cpu.a &= result;
+        cpu.set_nz(cpu.a);
+        result
+    }
+}
+
+impl RmwOp for Sre {
+    const MNEMONIC: Mnemonic = M::Sre;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) -> u8 {
+        let result = Lsr::execute(cpu, val);
+        cpu.a ^= result;
+        cpu.set_nz(cpu.a);
+        result
+    }
+}
+
+impl RmwOp for Rra {
+    const MNEMONIC: Mnemonic = M::Rra;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) -> u8 {
+        let result = Ror::execute(cpu, val);
+        adc(cpu, result);
+        result
+    }
+}
+
+impl RmwOp for Dcp {
+    const MNEMONIC: Mnemonic = M::Dcp;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) -> u8 {
+        let result = val.wrapping_sub(1);
+        compare(cpu, cpu.a, result);
+        result
+    }
+}
+
+impl RmwOp for Isc {
+    const MNEMONIC: Mnemonic = M::Isc;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) -> u8 {
+        let result = val.wrapping_add(1);
+        sbc(cpu, result);
+        result
+    }
+}
+
+// ======================================================================
+// Illegal read ops
+// ======================================================================
+
+impl ReadOp for Lax {
+    const MNEMONIC: Mnemonic = M::Lax;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) {
+        cpu.a = val;
+        cpu.x = val;
+        cpu.set_nz(val);
+    }
+}
+
+impl ReadOp for Nrd {
+    const MNEMONIC: Mnemonic = M::Nop;
+    #[inline(always)]
+    fn execute(_cpu: &mut Mos6502, _val: u8) {}
+}
+
+impl ReadOp for Las {
+    const MNEMONIC: Mnemonic = M::Las;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) {
+        let result = val & cpu.sp;
+        cpu.a = result;
+        cpu.x = result;
+        cpu.sp = result;
+        cpu.set_nz(result);
+    }
+}
+
+// ======================================================================
+// Illegal immediate ops (implemented as ReadOp)
+// ======================================================================
+
+impl ReadOp for Anc {
+    const MNEMONIC: Mnemonic = M::Anc;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) {
+        cpu.a &= val;
+        cpu.set_nz(cpu.a);
+        cpu.set_flag(C, cpu.a & N != 0);
+    }
+}
+
+impl ReadOp for Alr {
+    const MNEMONIC: Mnemonic = M::Alr;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) {
+        cpu.a &= val;
+        cpu.set_flag(C, cpu.a & 0x01 != 0);
+        cpu.a >>= 1;
+        cpu.set_nz(cpu.a);
+    }
+}
+
+impl ReadOp for Arr {
+    const MNEMONIC: Mnemonic = M::Arr;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) {
+        cpu.a &= val;
+        let carry_in = (cpu.p & C) << 7;
+        cpu.a = (cpu.a >> 1) | carry_in;
+        cpu.set_nz(cpu.a);
+        cpu.set_flag(C, cpu.a & 0x40 != 0);
+        cpu.set_flag(V, (cpu.a ^ (cpu.a << 1)) & 0x40 != 0);
+    }
+}
+
+impl ReadOp for Ane {
+    const MNEMONIC: Mnemonic = M::Ane;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) {
+        // Unstable: (A | magic) & X & M. Use $FF as magic constant.
+        cpu.a = (cpu.a | 0xFF) & cpu.x & val;
+        cpu.set_nz(cpu.a);
+    }
+}
+
+impl ReadOp for Lxa {
+    const MNEMONIC: Mnemonic = M::Lxa;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) {
+        // Unstable: (A | magic) & M → A, X. Use $FF as magic constant.
+        let result = (cpu.a | 0xFF) & val;
+        cpu.a = result;
+        cpu.x = result;
+        cpu.set_nz(result);
+    }
+}
+
+impl ReadOp for Axs {
+    const MNEMONIC: Mnemonic = M::Axs;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) {
+        let ax = cpu.a & cpu.x;
+        cpu.x = ax.wrapping_sub(val);
+        cpu.set_nz(cpu.x);
+        cpu.set_flag(C, ax >= val);
+    }
+}
+
+impl ReadOp for Usbc {
+    const MNEMONIC: Mnemonic = M::Usbc;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502, val: u8) {
+        sbc(cpu, val);
+    }
+}
+
+// ======================================================================
+// Illegal store ops
+// ======================================================================
+
+impl StoreOp for Sax {
+    const MNEMONIC: Mnemonic = M::Sax;
+    #[inline(always)]
+    fn value(cpu: &Mos6502) -> u8 { cpu.a & cpu.x }
+}
+
+// Note: SHA, SHX, SHY, TAS need the high byte of the target address,
+// which is available in base_addr. They store REG & (addr_hi + 1).
+// These are implemented as StoreOp where the address high byte
+// comes from base_addr >> 8.
+
+impl StoreOp for Sha {
+    const MNEMONIC: Mnemonic = M::Sha;
+    #[inline(always)]
+    fn value(cpu: &Mos6502) -> u8 {
+        cpu.a & cpu.x & ((cpu.base_addr >> 8) as u8).wrapping_add(1)
+    }
+}
+
+impl StoreOp for Shx {
+    const MNEMONIC: Mnemonic = M::Shx;
+    #[inline(always)]
+    fn value(cpu: &Mos6502) -> u8 {
+        cpu.x & ((cpu.base_addr >> 8) as u8).wrapping_add(1)
+    }
+}
+
+impl StoreOp for Shy {
+    const MNEMONIC: Mnemonic = M::Shy;
+    #[inline(always)]
+    fn value(cpu: &Mos6502) -> u8 {
+        cpu.y & ((cpu.base_addr >> 8) as u8).wrapping_add(1)
+    }
+}
+
+// TAS is special: it mutates SP (= A & X) before storing.
+// Implemented as an ImpliedOp that sets SP, used before a Sha store.
+impl ImpliedOp for Tas {
+    const MNEMONIC: Mnemonic = M::Tas;
+    #[inline(always)]
+    fn execute(cpu: &mut Mos6502) { cpu.sp = cpu.a & cpu.x; }
 }
 
 // ======================================================================

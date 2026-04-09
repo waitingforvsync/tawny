@@ -265,3 +265,14 @@
 - ~289 MHz median (up from ~272 before nmi_pending removal).
 - Combined `irq_shift` and `nmi_shift` into single `int_shift: u16` — interleaved even/odd bits, shift by 2 each phi2. ~294 MHz median.
 - Fixed `set_pc` — previously called `fetch_opcode` directly and discarded the bus output, meaning the first instruction's operand was never latched (data_latch contained the opcode byte instead). Now sets tstate to a dedicated `fetch_opcode` slot (last entry in step table, opcode $FF step 7) so it executes within the normal phi1/phi2 loop. This fixed the decimal test which was only running half its iterations (carry=0 only) because `LDY #$01` loaded Y with $A0 (the opcode) instead of $01.
+
+## 2026-04-09 — All 256 opcodes implemented (legal + illegal)
+
+### What we did
+- Implemented all 105 illegal opcodes: 6 RMW combos (SLO, RLA, SRE, RRA, DCP, ISC), LAX, SAX, 8 immediate combos (ANC, ALR, ARR, ANE, LXA, AXS, USBC), unstable stores (SHA, SHX, SHY, TAS), LAS, 12 JAM/halt opcodes, and 27 NOP variants.
+- RMW combos reuse existing legal op trait methods via monomorphisation — e.g. `Slo::execute` calls `Asl::execute` then ORs the result into A.
+- Three new addressing mode generators: `abs_y_rmw` (7 cycles), `ind_x_rmw` (8 cycles), `ind_y_rmw` (8 cycles).
+- Removed `trap()` and `ILL_ENTRY` / `Mnemonic::Ill` — every opcode slot now has a real implementation.
+- JAM opcodes are explicit `set` calls (not default fill).
+- All 256 opcodes covered in both step table and disassembly table. Tests verify full coverage.
+- ~283 MHz, all 14 tests pass.

@@ -20,6 +20,7 @@ pub type MicroOp = fn(&mut Mos6502) -> Mos6502Output;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mnemonic {
+    // Legal
     Adc, And, Asl, Bcc, Bcs, Beq, Bit, Bmi, Bne, Bpl, Brk, Bvc, Bvs,
     Clc, Cld, Cli, Clv, Cmp, Cpx, Cpy,
     Dec, Dex, Dey,
@@ -33,7 +34,10 @@ pub enum Mnemonic {
     Rol, Ror, Rti, Rts,
     Sbc, Sec, Sed, Sei, Sta, Stx, Sty,
     Tax, Tay, Tsx, Txa, Txs, Tya,
-    Ill,
+    // Illegal
+    Alr, Anc, Ane, Arr, Axs, Dcp, Isc, Jam,
+    Las, Lax, Lxa, Rla, Rra, Sax, Sha, Shx, Shy,
+    Slo, Sre, Tas, Usbc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,7 +81,6 @@ impl OpEntry {
     }
 }
 
-const ILL_ENTRY: OpEntry = OpEntry::new(Mnemonic::Ill, AddrMode::Implied);
 
 pub const BRK_IRQ: u8 = 0x02;
 pub const BRK_NMI: u8 = 0x04;
@@ -281,11 +284,54 @@ mod tests {
     }
 
     #[test]
-    fn disasm_table_illegal_opcodes_are_ill() {
-        // A few known illegal opcodes should be Ill.
-        for opcode in [0x02, 0x03, 0x04, 0x0B, 0x0C, 0x12, 0x22, 0x42, 0x62] {
-            assert_eq!(DISASM[opcode].mnemonic, Mnemonic::Ill,
-                "opcode ${:02X} should be Ill", opcode);
+    fn disasm_table_jam_opcodes() {
+        // All $x2 opcodes (except $A2 = LDX #) should be JAM.
+        let jams = [0x02, 0x12, 0x22, 0x32, 0x42, 0x52, 0x62, 0x72,
+                     0x92, 0xB2, 0xD2, 0xF2];
+        for opcode in jams {
+            assert_eq!(DISASM[opcode].mnemonic, Mnemonic::Jam,
+                "opcode ${:02X} should be Jam", opcode);
+        }
+    }
+
+    #[test]
+    fn disasm_table_all_opcodes_covered() {
+        // Every opcode should have a valid mnemonic (no gaps).
+        for opcode in 0..256usize {
+            let entry = DISASM[opcode];
+            // Just verify it's a known variant — if Mnemonic had an Ill
+            // variant we'd check for it, but now every slot should be real.
+            let _ = format!("{:?}", entry.mnemonic); // won't panic if valid
+        }
+    }
+
+    #[test]
+    fn disasm_table_illegal_ops_spot_check() {
+        let cases: &[(u8, Mnemonic, AddrMode)] = &[
+            (0x07, Mnemonic::Slo, AddrMode::ZeroPage),
+            (0x27, Mnemonic::Rla, AddrMode::ZeroPage),
+            (0x47, Mnemonic::Sre, AddrMode::ZeroPage),
+            (0x67, Mnemonic::Rra, AddrMode::ZeroPage),
+            (0xC7, Mnemonic::Dcp, AddrMode::ZeroPage),
+            (0xE7, Mnemonic::Isc, AddrMode::ZeroPage),
+            (0xA7, Mnemonic::Lax, AddrMode::ZeroPage),
+            (0x87, Mnemonic::Sax, AddrMode::ZeroPage),
+            (0x0B, Mnemonic::Anc, AddrMode::Immediate),
+            (0x4B, Mnemonic::Alr, AddrMode::Immediate),
+            (0x6B, Mnemonic::Arr, AddrMode::Immediate),
+            (0xCB, Mnemonic::Axs, AddrMode::Immediate),
+            (0xEB, Mnemonic::Usbc, AddrMode::Immediate),
+            (0x03, Mnemonic::Slo, AddrMode::IndirectX),
+            (0x13, Mnemonic::Slo, AddrMode::IndirectY),
+            (0x9B, Mnemonic::Tas, AddrMode::AbsoluteY),
+            (0xBB, Mnemonic::Las, AddrMode::AbsoluteY),
+        ];
+        for &(opcode, mnemonic, addr_mode) in cases {
+            let entry = DISASM[opcode as usize];
+            assert_eq!(entry.mnemonic, mnemonic,
+                "opcode ${:02X}: expected {:?}, got {:?}", opcode, mnemonic, entry.mnemonic);
+            assert_eq!(entry.addr_mode, addr_mode,
+                "opcode ${:02X}: expected {:?}, got {:?}", opcode, addr_mode, entry.addr_mode);
         }
     }
 

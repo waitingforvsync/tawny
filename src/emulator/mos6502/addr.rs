@@ -310,6 +310,21 @@ pub fn rmw_execute<OP: RmwOp>(cpu: &mut Mos6502) -> Mos6502Output {
     write(cpu.base_addr, result)
 }
 
+/// JAM: CPU halts. Does not advance tstate — stays frozen.
+pub fn jam(cpu: &mut Mos6502) -> Mos6502Output {
+    read(cpu.pc)
+}
+
+/// TAS helper: set SP = A & X, then write A & X & (addr_hi + 1).
+/// Used as the fixup_write step for TAS ($9B).
+pub fn tas_write(cpu: &mut Mos6502) -> Mos6502Output {
+    cpu.sp = cpu.a & cpu.x;
+    let val = cpu.a & cpu.x & ((cpu.base_addr >> 8) as u8).wrapping_add(1);
+    cpu.inc_pc();
+    cpu.next_state();
+    write(cpu.base_addr, val)
+}
+
 // ==========================================================================
 // Branches
 // ==========================================================================

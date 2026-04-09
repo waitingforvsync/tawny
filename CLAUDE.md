@@ -28,9 +28,9 @@ Named after the tawny owl — the BBC Micro logo is a stylised owl made from dot
   - `clock.rs` — 4 MHz master clock, phase tracking, frequency divider helpers
   - `mos6502.rs` + `mos6502/` — MOS 6502 CPU (cycle-accurate, passes Dormann test)
     - `flags.rs` — Processor status flag bit constants
-    - `ops.rs` — ALU/register operations via ZST types and traits
+    - `ops.rs` — ALU/register operations via ZST types and traits (legal + illegal)
     - `addr.rs` — Addressing mode micro-op functions
-    - `table.rs` — Compile-time step table (256 opcodes × 8 steps) + disassembly table
+    - `table.rs` — Compile-time step table (all 256 opcodes × 8 steps) + disassembly table
   - `hd6845s.rs` — HD6845S CRT Controller (placeholder)
   - `vidproc.rs` — VLSI Video ULA (placeholder)
   - `r6522.rs` — R6522 VIA (placeholder)
