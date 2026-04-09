@@ -263,3 +263,5 @@
 - Removed `nmi_pending` field. Bit 0 of `nmi_shift` now acts as a sticky pending latch — set on NMI rising edge, propagated on each shift via `(nmi_shift & 1)`, cleared by fetch_opcode when the NMI is serviced.
 - Mos6502 struct reduced from 15 to 13 fields.
 - ~289 MHz median (up from ~272 before nmi_pending removal).
+- Combined `irq_shift` and `nmi_shift` into single `int_shift: u16` — interleaved even/odd bits, shift by 2 each phi2. ~294 MHz median.
+- Fixed `set_pc` — previously called `fetch_opcode` directly and discarded the bus output, meaning the first instruction's operand was never latched (data_latch contained the opcode byte instead). Now sets tstate to a dedicated `fetch_opcode` slot (last entry in step table, opcode $FF step 7) so it executes within the normal phi1/phi2 loop. This fixed the decimal test which was only running half its iterations (carry=0 only) because `LDY #$01` loaded Y with $A0 (the opcode) instead of $01.

@@ -8,6 +8,10 @@ use flags::*;
 pub const MAX_STEPS: usize = 8;
 pub const TABLE_SIZE: usize = 256 * MAX_STEPS;
 
+/// tstate value that maps to a dedicated fetch_opcode slot (last entry in the table).
+/// Used by set_pc to bootstrap execution into the normal phi1/phi2 loop.
+const FETCH_TSTATE: u16 = (TABLE_SIZE - 1) as u16;
+
 pub type MicroOp = fn(&mut Mos6502) -> Mos6502Output;
 
 // ======================================================================
@@ -192,15 +196,15 @@ impl Mos6502 {
         self.p |= I;
     }
 
-    /// Start execution at the given PC. The caller must provide the opcode
-    /// byte at that address. This simulates fetch_opcode having just run:
-    /// it sets PC, feeds the opcode into the decode logic, and sets tstate
-    /// so the next phi1 call executes the first micro-op of that instruction.
+    /// Start execution at the given PC. Places the opcode byte into
+    /// data_latch and sets tstate to the dedicated fetch_opcode slot.
+    /// The next phi1 call will run fetch_opcode, which decodes the opcode
+    /// and outputs read(PC+1). The caller should then run phi2 as normal.
     pub fn set_pc(&mut self, pc: u16, opcode: u8) {
         self.pc = pc;
         self.data_latch = opcode;
         self.brk_flags = 0;
-        addr::fetch_opcode(self);
+        self.tstate = FETCH_TSTATE;
     }
 }
 

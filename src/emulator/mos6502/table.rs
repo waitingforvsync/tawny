@@ -500,5 +500,9 @@ const fn build_tables() -> Tables {
     set(&mut t, 0x68, &pull::<ops::Pla>());
     set(&mut t, 0x28, &pull::<ops::Plp>());
 
+    // Dedicated fetch_opcode entry point in the last slot (opcode $FF step 7).
+    // Used by set_pc to bootstrap into the normal phi1/phi2 loop.
+    t.steps[TABLE_SIZE - 1] = fetch_opcode;
+
     t
 }

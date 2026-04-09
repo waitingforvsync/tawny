@@ -6,13 +6,13 @@
 /// IRQ vector: $FFFE=$0020
 ///
 /// The LDA $13,X instruction finishes at Visual6502 cycle 16 (sync for
-/// NOP at $0009). set_pc absorbs CLI's fetch_opcode, so our cycle 0
-/// corresponds to Visual6502 cycle 2. Our cycles = V6502 cycles - 2.
+/// NOP at $0009). set_pc sets tstate so the next phi1 runs fetch_opcode,
+/// so our cycle 0 = V6502 cycle 1. Our cycles = V6502 cycles - 1.
 ///
 /// Three cases (V6502 cycle / our cycle):
-/// 1. IRQ at V6502 14 / our 12 → taken instead of NOP
-/// 2. IRQ at V6502 15 / our 13 → too late, NOP executes, interrupt after NOP
-/// 3. IRQ at V6502 13 / our 11 → early, still taken instead of NOP
+/// 1. IRQ at V6502 14 / our 13 → taken instead of NOP
+/// 2. IRQ at V6502 15 / our 14 → too late, NOP executes, interrupt after NOP
+/// 3. IRQ at V6502 13 / our 12 → early, still taken instead of NOP
 use tawny::emulator::mos6502::{Mos6502, Mos6502Input};
 
 fn build_ram() -> [u8; 65536] {
@@ -102,27 +102,27 @@ fn irq_taken_before_nop(syncs: &[(u64, u16)]) -> bool {
 
 #[test]
 fn irq_at_last_possible_cycle_takes_interrupt_instead_of_nop() {
-    // IRQ asserted at V6502 cycle 14 (our cycle 12) — the last cycle where
+    // IRQ asserted at V6502 cycle 14 (our cycle 13) — the last cycle where
     // the interrupt can be taken instead of NOP. Held through the pipeline.
-    let syncs = run_with_irq(12, 14, 40);
+    let syncs = run_with_irq(13, 15, 40);
     assert!(irq_taken_before_nop(&syncs),
         "IRQ at V6502 cycle 14 should be taken instead of NOP");
 }
 
 #[test]
 fn irq_one_cycle_too_late_deferred_past_nop() {
-    // IRQ asserted at V6502 cycle 15 (our cycle 13) — one cycle too late.
+    // IRQ asserted at V6502 cycle 15 (our cycle 14) — one cycle too late.
     // NOP executes normally, interrupt taken after NOP.
-    let syncs = run_with_irq(13, 15, 40);
+    let syncs = run_with_irq(14, 16, 40);
     assert!(!irq_taken_before_nop(&syncs),
         "IRQ at V6502 cycle 15 should be deferred past NOP");
 }
 
 #[test]
 fn irq_one_cycle_early_still_takes_interrupt() {
-    // IRQ asserted at V6502 cycle 13 (our cycle 11) — one cycle earlier,
+    // IRQ asserted at V6502 cycle 13 (our cycle 12) — one cycle earlier,
     // still taken instead of NOP.
-    let syncs = run_with_irq(11, 14, 40);
+    let syncs = run_with_irq(12, 15, 40);
     assert!(irq_taken_before_nop(&syncs),
         "IRQ at V6502 cycle 13 should still be taken instead of NOP");
 }
