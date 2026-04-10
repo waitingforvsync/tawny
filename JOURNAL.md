@@ -276,3 +276,11 @@
 - JAM opcodes are explicit `set` calls (not default fill).
 - All 256 opcodes covered in both step table and disassembly table. Tests verify full coverage.
 - ~283 MHz, all 14 tests pass.
+
+## 2026-04-10 — Branch interrupt latency fix
+
+### What we did
+- A 3-cycle taken branch (no page cross) has one extra cycle of interrupt latency compared to other instructions. On real hardware, the branch skips the phi2 cycle that normally samples the interrupt pipeline.
+- Fixed by shifting `int_shift` right by 2 in `branch_take` when no page cross, compensating for the skipped pipeline sample. Same approach as the floooh 6502 emulation.
+- Added branch-specific IRQ timing tests verifying 2-cycle (not taken), 3-cycle (taken, no page cross, extra latency), and 4-cycle (taken, page cross, normal latency) branches.
+- All 17 tests pass.

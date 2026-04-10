@@ -349,9 +349,14 @@ pub fn branch_take(cpu: &mut Mos6502) -> Mos6502Output {
     let old_pc = cpu.pc;
     cpu.pc = cpu.pc.wrapping_add(offset as i16 as u16);
     if (old_pc ^ cpu.pc) & 0xFF00 != 0 {
+        // Page cross: extra cycle for fixup. Normal IRQ latency.
         cpu.next_state();
         read((old_pc & 0xFF00) | (cpu.pc & 0x00FF))
     } else {
+        // No page cross: skip fixup cycle. This skips a phi2 that would
+        // normally advance the interrupt pipeline, so we compensate by
+        // shifting int_shift right to add one cycle of latency.
+        cpu.int_shift >>= 2;
         cpu.skip_next_state();
         sync_read(cpu.pc)
     }
