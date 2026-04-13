@@ -31,6 +31,8 @@ Named after the tawny owl — the BBC Micro logo is a stylised owl made from dot
     - `ops.rs` — ALU/register operations via ZST types and traits (legal + illegal)
     - `addr.rs` — Addressing mode micro-op functions
     - `table.rs` — Compile-time step table (all 256 opcodes × 8 steps) + disassembly table
+  - `ram.rs` — 32K static RAM (Component with 15-bit address, data, rw, ce pins)
+  - `rom.rs` — 16K ROM + 16K sideways RAM (`Ram16k`), both with 14-bit address pins
   - `hd6845s.rs` — HD6845S CRT Controller (placeholder)
   - `vidproc.rs` — VLSI Video ULA (placeholder)
   - `r6522.rs` — R6522 VIA (placeholder)
@@ -40,12 +42,16 @@ Named after the tawny owl — the BBC Micro logo is a stylised owl made from dot
   - `speaker.rs` — Audio output (placeholder)
   - `disk_drive.rs` — Disk image I/O (placeholder)
 - `src/systems.rs` + `src/systems/` — System-level glue
-  - `model_b.rs` — BBC Model B motherboard: Bus struct, component wiring
+  - `model_b.rs` — BBC Model B motherboard: address decoder, cycle stretching, component wiring, ROM loading
+- `roms/` — ROM binaries (OS 1.20, BASIC 2) embedded via `include_bytes!`
 
 ## Emulation design
 - **Base tick rate:** 4 MHz (CPU/video memory interleaving)
-- **Component model:** Each component has opaque internal state + typed Input/Output pin structs. The `Component` trait provides `tick()` and `reset()`.
-- **System glue:** The `ModelB` struct owns all components and a `Bus` struct. Glue logic copies signals between the bus and component pins each tick.
+- **Component model:** Each component has opaque internal state + typed Input/Output pin structs. The `Component` trait provides `tick()` and `reset()`. All devices (including RAM/ROM) share the same input shape: address, data, rw, chip enable (ce).
+- **Active vs passive components:** Active components (VIAs, CRTC, Vidproc) tick every CPU phase regardless of chip select — they have internal state (timers, counters) that must advance continuously. Passive components (RAM, ROM) are only ticked when selected by address decoding.
+- **System glue:** `ModelB` owns all components. `update(cycles_2mhz)` processes 2 MHz timeslices, internally ticking at 4 MHz. Address decoding is a pure function returning a `ChipSelect` enum. Active components are ticked first, then the address decode result routes data to/from the appropriate device.
+- **Address map:** `ChipSelect` enum covers RAM (0x0000–0x7FFF), paged ROM/RAM (0x8000–0xBFFF, 16 banks), OS ROM (0xC000–0xFBFF, 0xFF00–0xFFFF), and 12 I/O devices in the 0xFC00–0xFEFF region.
+- **Cycle stretching:** 1 MHz device accesses stretch phi0 by holding it high. Two shapes depending on 1MHzE phase: 1 or 2 extra 2 MHz ticks. Implemented by caching phi1 output and deferring phi2. Video ticks continue during the stretch.
 - **Peripherals:** Bridge between emulated hardware and host platform. Operate at their own rates (frame, sample, event), not at 4 MHz.
 - **Module convention:** Newer Rust style (`emulator.rs` + `emulator/` folder, not `mod.rs`)
 
@@ -108,6 +114,36 @@ cycle	ab	db	rw	Fetch	pc	a	x	y	s	p	Execute	State	ir	tcstate	pd	idl	irq	sync	abl	a
 19	000c	00	1		000c	42	00	00	fa	nv‑BdIzc	RTI	T2	40	110111	40	40	0	0	0c	00
 19	000c	00	1		000c	42	00	00	fa	nv‑BdIzc	RTI	T2	40	110111	00	00	0	0	0c	00
 ```
+
+## BBC Model B clock signals and cycle stretching
+
+The BBC Micro has a 16 MHz crystal divided down. The key clock signals:
+
+```
+4 MHz           -_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_
+2 MHz           --__--__--__--__--__--__--__--__--__--__--__--__--__--__--__--__
+1 MHzE          ----____----____----____----____----____----____----____----____
+1 MHz device    ____----________________________----____________________________
+phi0            __--__------__--__--__--__--__--______------__--__--__--__--__--
+phi1            --__--______--__--__--__--__--__------______--__--__--__--__--__
+2 MHzE (phi2)   __--__------__--__--__--__--__--______------__--__--__--__--__--
+```
+
+- **4 MHz**: divided master clock. Each char = one half-cycle (125 ns).
+- **2 MHz**: 4 MHz ÷ 2. Drives RAM access alternation (video/CPU interleaving). Runs continuously, never stretched.
+- **1 MHzE**: 2 MHz ÷ 2. Clock signal to 1 MHz devices (VIAs etc).
+- **1 MHz device**: output from address decode glue logic, high when a 1 MHz device is being accessed.
+- **phi0**: clock input to the 6502. Normally follows 2 MHz. Discrete glue logic (ICs 23, 29, 30, 31, 33, 34, 38) stretches phi0 by holding it high or low when a 1 MHz device is accessed, until 1 MHz and 2 MHz falling edges align.
+- **phi1**: derived by the 6502 as inverse of phi0.
+- **2 MHzE**: derived from phi1 (inverted). Clocks 2 MHz devices. Also stretched.
+
+**Two stretch shapes** (shown in the diagram):
+- **1MHzE low at access time**: phi0 high extended from 2→6 half-cycles of 4 MHz. Stretched cycle = 8 half-cycles total. Costs **1 extra 2 MHz tick**.
+- **1MHzE high at access time**: phi0 low AND high both extended to 6 half-cycles. Stretched cycle = 12 half-cycles total. Costs **2 extra 2 MHz ticks**.
+
+During stretching, 2 MHz continues normally — video reads from RAM keep ticking. Only the CPU (and 2 MHzE-clocked devices) are frozen.
+
+**Note**: The BBC Micro does NOT have bus contention in higher video modes. The Acorn Electron does.
 
 ## Build & run
 ```sh

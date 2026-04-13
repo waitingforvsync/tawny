@@ -284,3 +284,32 @@
 - Fixed by shifting `int_shift` right by 2 in `branch_take` when no page cross, compensating for the skipped pipeline sample. Same approach as the floooh 6502 emulation.
 - Added branch-specific IRQ timing tests verifying 2-cycle (not taken), 3-cycle (taken, no page cross, extra latency), and 4-cycle (taken, page cross, normal latency) branches.
 - All 17 tests pass.
+
+## 2026-04-13 — Address translation, cycle stretching, and system wiring
+
+### What we did
+- Implemented BBC Model B address decoding: `ChipSelect` enum with 16 variants covering the full 64K address map, `decode_address()` pure function with `decode_fe_page()` helper for the 0xFE I/O page.
+- Implemented `is_slow()` for 1 MHz device detection using a bits-7:5 lookup table for the 0xFE page, plus pages 0xFC/0xFD always slow.
+- Created `Ram` component (32K, 15-bit address bus) and `Rom`/`Ram16k` components (16K, 14-bit address bus) with uniform `(address, data, rw, ce)` input interface.
+- Created `PagedBank` enum (Rom/Ram variants) with 16 optional sideways bank slots.
+- Implemented cycle stretching: phi1 output cached, phi2 deferred by 1 or 2 extra 2 MHz ticks depending on 1MHzE phase at access time. Video ticks continue during stretch.
+- Restructured `ModelB::tick_cpu()` so active components (CRTC, VIAs, Vidproc) tick every CPU phase with `cs` from address decode, while passive components (RAM, ROM) only tick when selected via `route_passive()`.
+- `ModelB::new()` embeds OS 1.20 and BASIC 2 ROMs via `include_bytes!`. BASIC in bank 15, sideways RAM in bank 14, paged_select defaults to 15.
+- `update(cycles_2mhz)` provides the external API, internally processing pairs of 4 MHz ticks.
+- Added clock signal diagram and cycle stretching reference to CLAUDE.md.
+- 34 tests pass including integration test verifying CPU fetches reset vector from OS ROM.
+
+### Design decisions
+- **ChipSelect enum** — one device selected at a time mirrors hardware's active-high select lines. Pure function matches combinational decode logic.
+- **Uniform Component interface** — RAM, ROM, and I/O all use the same `(address, data, rw, ce)` input shape. Passive components only ticked when selected (no wasted idle ticks). Active components tick continuously with `ce` reflecting address decode.
+- **RAM ticked in both phases** — video phase uses CRTC's MA output, CPU phase uses CPU's lower 15 bits. Models the real 4 MHz interleaving.
+- **Cycle stretching via deferred phi2** — phi0 stretching is modelled by caching phi1 output and delaying phi2. The CPU never sees the stretch; it just experiences a longer cycle. 2 MHz (video) continues ticking.
+- **ROMs embedded at compile time** — `include_bytes!` for OS 1.20 and BASIC 2. No runtime file loading needed for the core system.
+
+### Files changed
+- `src/emulator/ram.rs` (new) — Ram component
+- `src/emulator/rom.rs` (new) — Rom, Ram16k components
+- `src/emulator.rs` — registered ram, rom modules
+- `src/systems/model_b.rs` — complete rewrite: address decoder, memory, stretch state, glue logic, ROM loading
+- `CLAUDE.md` — architecture updates, clock signal diagram
+- `roms/os12.rom`, `roms/basic2.rom` (new) — ROM binaries from b2 emulator

@@ -3,4 +3,6 @@ pub mod component;
 pub mod hd6845s;
 pub mod mos6502;
 pub mod r6522;
+pub mod ram;
+pub mod rom;
 pub mod vidproc;
