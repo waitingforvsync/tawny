@@ -51,16 +51,15 @@ Named after the tawny owl — the BBC Micro logo is a stylised owl made from dot
 - **Active vs passive components:** Active components (VIAs, CRTC, Vidproc) tick every CPU phase regardless of chip select — they have internal state (timers, counters) that must advance continuously. Passive components (RAM, ROM) are only ticked when selected by address decoding.
 - **System glue:** `ModelB` owns all components. `update(cycles_2mhz)` processes 2 MHz timeslices, internally ticking at 4 MHz. Address decoding is a pure function returning a `ChipSelect` enum. Active components are ticked first, then the address decode result routes data to/from the appropriate device.
 - **Address map:** `ChipSelect` enum covers RAM (0x0000–0x7FFF), paged ROM/RAM (0x8000–0xBFFF, 16 banks), OS ROM (0xC000–0xFBFF, 0xFF00–0xFFFF), and 12 I/O devices in the 0xFC00–0xFEFF region.
-- **Cycle stretching:** 1 MHz device accesses stretch phi0 by holding it high. Two shapes depending on 1MHzE phase: 1 or 2 extra 2 MHz ticks. Implemented by caching phi1 output and deferring phi2. Video ticks continue during the stretch.
+- **Cycle stretching:** 1 MHz device accesses stretch phi0 by holding it high or low when a 1 MHz device is accessed, until 1 MHz and 2 MHz falling edges align.
 - **Peripherals:** Bridge between emulated hardware and host platform. Operate at their own rates (frame, sample, event), not at 4 MHz.
 - **Module convention:** Newer Rust style (`emulator.rs` + `emulator/` folder, not `mod.rs`)
 
 ## 6502 CPU design
-- **Two-phase clock:** phi1 dispatches micro-op (returns bus output), phi2 latches data + shifts interrupt pipeline
-- **Step table:** Static array of `fn(&mut Mos6502) -> Mos6502Output` pointers indexed by `(opcode << 3) | step`
+- **Single-phase tick:** `tick(input) -> output` models phi2 falling (latch data + shift interrupt pipeline) immediately followed by phi1 rising (dispatch micro-op). Data bus value flows as a register parameter through `dispatch` to each micro-op — no `data_latch` field on the struct.
+- **Step table:** Static array of `fn(&mut Mos6502, u8) -> Mos6502Output` pointers indexed by `(opcode << 3) | step`
 - **Micro-ops named by what they consume from data_latch** — e.g. `fetch_zp_addr` consumes a ZP address, `fetch_zp<LDA>` consumes a ZP value and executes LDA
 - **`fetch_opcode` is always the last step** — it consumes the opcode from data_latch, checks interrupts, sets tstate (or forces BRK), increments PC, outputs read(PC)
-- **phi2 is trivial** — just latches data_latch and shifts the interrupt pipeline. No decode logic.
 - **ALU ops execute as soon as operand arrives** — the step that has the operand in data_latch executes the operation immediately, then outputs sync_read(PC) for the next opcode
 - **PC increments baked into each micro-op** — no generic logic. Steps that consume a PC-fetched byte increment PC; steps that consume from computed addresses don't.
 - **`opcode_read` step** after write cycles — reads the next opcode from PC (since data_latch after a write contains the written value, not an opcode)

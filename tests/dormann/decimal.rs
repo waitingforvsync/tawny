@@ -15,7 +15,7 @@ fn decimal_test() {
     ram[..rom.len()].copy_from_slice(&rom);
 
     let mut cpu = Mos6502::new();
-    cpu.set_pc(START_PC, ram[START_PC as usize]);
+    cpu.set_pc(START_PC);
 
     let start = Instant::now();
     let (pc, cycles) = super::run_to_trap(&mut cpu, &mut ram, |_| false, |_| false);

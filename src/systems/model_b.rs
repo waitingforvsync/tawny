@@ -135,8 +135,17 @@ pub struct ModelB {
     paged_banks: [Option<PagedBank>; 16],
     paged_select: u8,
 
+    // CPU bus state carried between ticks. After each cpu.tick(), the system
+    // routes the bus and stores the result here for the next tick's input.
+    cpu_bus_data: u8,
+
     // Cycle stretching state.
-    stretched_output: Option<(Mos6502Output, ChipSelect)>,
+    /// The CPU's most recent output, held during a stretch so we can route
+    /// the bus when the stretch completes.
+    cpu_output: Mos6502Output,
+    /// The chip selected by the stretched address.
+    stretched_cs: ChipSelect,
+    /// Extra 2 MHz ticks remaining in the current stretch (0 = no stretch).
     stretch_remaining: u8,
 
     // Interrupt aggregation.
@@ -164,7 +173,9 @@ impl ModelB {
             os_rom: Rom::new(Box::new(*OS_ROM)),
             paged_banks,
             paged_select: 15, // BASIC selected by default
-            stretched_output: None,
+            cpu_bus_data: 0,
+            cpu_output: Mos6502Output { address: 0, data: 0, rw: true, sync: false },
+            stretched_cs: ChipSelect::Ram,
             stretch_remaining: 0,
             irq: false,
             nmi: false,
@@ -240,17 +251,62 @@ impl ModelB {
 
     /// CPU phase: tick active components (always) and run CPU bus cycle (if not stretching).
     fn tick_cpu(&mut self) {
-        // Resolve CPU bus state: None during stretch wait, Some on normal or
-        // stretch-completing cycles.
-        let access = self.advance_cpu();
+        // During a stretch, the CPU is frozen — active components still tick
+        // but with ce=false. When the stretch ends, we route the bus using
+        // the cached CPU output before ticking the CPU.
+        if self.stretch_remaining > 0 {
+            self.stretch_remaining -= 1;
+            if self.stretch_remaining == 0 {
+                // Stretch complete: route the cached address now.
+                self.route_cpu_bus(self.stretched_cs);
+            }
+            self.tick_active_components(None, 0, 0, true);
+            return;
+        }
 
-        // Extract bus signals (dummy values when no access — ce will be false).
-        let (cs, addr, data, rw) = match &access {
-            Some((out, cs)) => (Some(*cs), out.address, out.data, out.rw),
-            None => (None, 0, 0, true),
+        // Normal cycle: tick the CPU, then route the bus.
+        let cpu_out = self.cpu.tick(&Mos6502Input {
+            data: self.cpu_bus_data,
+            irq: self.irq,
+            nmi: self.nmi,
+        });
+        self.cpu_output = cpu_out;
+        let cs = decode_address(cpu_out.address);
+
+        // Check for cycle stretching on 1 MHz devices.
+        if is_slow(cpu_out.address) {
+            let extra = self.calc_stretch_ticks();
+            if extra > 0 {
+                self.stretched_cs = cs;
+                self.stretch_remaining = extra;
+                self.tick_active_components(None, 0, 0, true);
+                return;
+            }
+        }
+
+        // Route bus and tick active components.
+        self.route_cpu_bus(cs);
+        self.tick_active_components(Some(cs), cpu_out.address, cpu_out.data, cpu_out.rw);
+    }
+
+    /// Route the CPU's bus access to the selected device, storing the result
+    /// in `cpu_bus_data` for the next tick.
+    fn route_cpu_bus(&mut self, cs: ChipSelect) {
+        let cpu_out = self.cpu_output;
+        self.cpu_bus_data = match cs {
+            ChipSelect::Crtc | ChipSelect::SystemVia | ChipSelect::UserVia
+            | ChipSelect::Vidproc => {
+                // Active components — will be ticked with ce=true by tick_active_components.
+                // Data resolved there.
+                0xFF // placeholder, overwritten by tick_active_components
+            }
+            _ => self.route_passive(cpu_out.address, cpu_out.data, cpu_out.rw, cs),
         };
+    }
 
-        // Tick active components every CPU phase. cs=true only if addressed.
+    /// Tick active components every CPU phase. `cs` is Some when the CPU is
+    /// addressing one of them (ce=true for that device).
+    fn tick_active_components(&mut self, cs: Option<ChipSelect>, addr: u16, data: u8, rw: bool) {
         let crtc_out = self.crtc.tick(&Hd6845sInput {
             rs: addr & 1 != 0,
             cs: cs == Some(ChipSelect::Crtc),
@@ -282,54 +338,16 @@ impl ModelB {
         // Aggregate interrupts from VIAs.
         self.irq = sys_via_out.irq || usr_via_out.irq;
 
-        // If no CPU access this tick (mid-stretch), we're done.
-        let Some((_, cs)) = access else { return };
-
-        // Resolve the data bus: active components already ticked above,
-        // passive components handled by route_passive.
-        let data_in = match cs {
-            ChipSelect::Crtc => crtc_out.data,
-            ChipSelect::SystemVia => sys_via_out.data,
-            ChipSelect::UserVia => usr_via_out.data,
-            ChipSelect::Vidproc => 0xFF, // write-only
-            _ => self.route_passive(addr, data, rw, cs),
-        };
-
-        self.cpu.phi2(&Mos6502Input {
-            data: data_in,
-            irq: self.irq,
-            nmi: self.nmi,
-            ready: true,
-        });
-    }
-
-    /// Advance CPU state and return the bus access if one completes this tick.
-    ///
-    /// Returns `None` during a stretch wait (active components still tick,
-    /// but the CPU is frozen). Returns `Some` on normal cycles or when a
-    /// stretch completes.
-    fn advance_cpu(&mut self) -> Option<(Mos6502Output, ChipSelect)> {
-        if self.stretch_remaining > 0 {
-            self.stretch_remaining -= 1;
-            if self.stretch_remaining == 0 {
-                return self.stretched_output.take();
-            }
-            return None;
+        // If an active component was addressed, store its data for the CPU.
+        if let Some(cs) = cs {
+            self.cpu_bus_data = match cs {
+                ChipSelect::Crtc => crtc_out.data,
+                ChipSelect::SystemVia => sys_via_out.data,
+                ChipSelect::UserVia => usr_via_out.data,
+                ChipSelect::Vidproc => 0xFF, // write-only
+                _ => self.cpu_bus_data, // already set by route_cpu_bus
+            };
         }
-
-        let cpu_out = self.cpu.phi1();
-        let cs = decode_address(cpu_out.address);
-
-        if is_slow(cpu_out.address) {
-            let extra = self.calc_stretch_ticks();
-            if extra > 0 {
-                self.stretched_output = Some((cpu_out, cs));
-                self.stretch_remaining = extra;
-                return None;
-            }
-        }
-
-        Some((cpu_out, cs))
     }
 
     /// Calculate extra 2 MHz ticks to defer for cycle stretching.
@@ -408,7 +426,7 @@ impl ModelB {
         self.vidproc.reset();
         self.system_via.reset();
         self.user_via.reset();
-        self.stretched_output = None;
+        self.cpu_bus_data = 0;
         self.stretch_remaining = 0;
         self.irq = false;
         self.nmi = false;

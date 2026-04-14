@@ -23,8 +23,8 @@ pub static STEPS: &[MicroOp; TABLE_SIZE] = &TABLES.steps;
 pub static DISASM: &[OpEntry; 256] = &TABLES.disasm;
 
 #[inline(always)]
-pub fn dispatch(cpu: &mut super::Mos6502) -> super::Mos6502Output {
-    TABLES.steps[cpu.tstate as usize](cpu)
+pub fn dispatch(cpu: &mut super::Mos6502, data: u8) -> super::Mos6502Output {
+    TABLES.steps[cpu.tstate as usize](cpu, data)
 }
 
 // ======================================================================

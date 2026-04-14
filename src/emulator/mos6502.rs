@@ -12,7 +12,7 @@ pub const TABLE_SIZE: usize = 256 * MAX_STEPS;
 /// Used by set_pc to bootstrap execution into the normal phi1/phi2 loop.
 const FETCH_TSTATE: u16 = (TABLE_SIZE - 1) as u16;
 
-pub type MicroOp = fn(&mut Mos6502) -> Mos6502Output;
+pub type MicroOp = fn(&mut Mos6502, u8) -> Mos6502Output;
 
 // ======================================================================
 // Disassembly metadata
@@ -90,9 +90,9 @@ pub struct Mos6502Input {
     pub data: u8,
     pub irq: bool,
     pub nmi: bool,
-    pub ready: bool,
 }
 
+#[derive(Clone, Copy)]
 pub struct Mos6502Output {
     pub address: u16,
     pub data: u8,
@@ -111,7 +111,6 @@ pub struct Mos6502 {
 
     // --- Internal state ---
     tstate: u16,
-    data_latch: u8,
     base_addr: u16,
 
     // --- Interrupt state ---
@@ -135,7 +134,6 @@ impl Mos6502 {
 
             tstate: 0,
             brk_flags: BRK_RESET,
-            data_latch: 0,
             base_addr: 0,
 
             int_shift: 0,
@@ -143,23 +141,26 @@ impl Mos6502 {
         }
     }
 
+    /// Execute one CPU cycle: latch data from the previous bus operation,
+    /// shift the interrupt pipeline, then dispatch the next micro-op.
+    ///
+    /// Models the phi2 falling edge (latch + interrupts) followed immediately
+    /// by the phi1 rising edge (next micro-op dispatch). The first call after
+    /// reset receives dummy input — the first BRK step ignores data_latch.
+    /// Execute one CPU cycle: shift the interrupt pipeline, then dispatch
+    /// the next micro-op with the data bus value from the previous cycle.
     #[inline(always)]
-    pub fn phi1(&mut self) -> Mos6502Output {
-        table::dispatch(self)
-    }
-
-    #[inline(always)]
-    pub fn phi2(&mut self, input: &Mos6502Input) {
-        self.data_latch = input.data;
-
-        // Combined IRQ/NMI pipeline: shift left by 2, insert new bits.
-        // Bit 0 = IRQ, bit 1 = NMI (sticky latch in bit 1).
+    pub fn tick(&mut self, input: &Mos6502Input) -> Mos6502Output {
+        // phi2 falling: shift interrupt pipeline.
         let irq_bit = (input.irq && (self.p & I) == 0) as u16;
         let nmi_edge = (input.nmi && !self.nmi_prev) as u16;
         self.int_shift = (self.int_shift << 2)
             | irq_bit
             | ((self.int_shift & 0x02) | (nmi_edge << 1));
         self.nmi_prev = input.nmi;
+
+        // phi1 rising: dispatch next micro-op with bus data in a register.
+        table::dispatch(self, input.data)
     }
 
     // --- Helpers ---
@@ -199,13 +200,11 @@ impl Mos6502 {
         self.p |= I;
     }
 
-    /// Start execution at the given PC. Places the opcode byte into
-    /// data_latch and sets tstate to the dedicated fetch_opcode slot.
-    /// The next phi1 call will run fetch_opcode, which decodes the opcode
-    /// and outputs read(PC+1). The caller should then run phi2 as normal.
-    pub fn set_pc(&mut self, pc: u16, opcode: u8) {
+    /// Start execution at the given PC. Sets tstate so the next tick will
+    /// run fetch_opcode. The caller must provide the opcode byte at `pc`
+    /// as `input.data` in the first tick call.
+    pub fn set_pc(&mut self, pc: u16) {
         self.pc = pc;
-        self.data_latch = opcode;
         self.brk_flags = 0;
         self.tstate = FETCH_TSTATE;
     }

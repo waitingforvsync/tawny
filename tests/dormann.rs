@@ -23,22 +23,25 @@ fn run_to_trap(
 ) -> (u16, u64) {
     let mut prev_pc = 0xFFFFu16;
     let mut stuck_count = 0u32;
+    let mut bus_data = ram[cpu.pc as usize];
+    let mut irq = false;
+    let mut nmi = false;
 
     for cycle in 0..MAX_CYCLES {
-        let output = cpu.phi1();
+        let output = cpu.tick(&Mos6502Input {
+            data: bus_data,
+            irq,
+            nmi,
+        });
         let addr = output.address as usize;
-        let data = if output.rw {
+        bus_data = if output.rw {
             ram[addr]
         } else {
             ram[addr] = output.data;
             output.data
         };
-        cpu.phi2(&Mos6502Input {
-            data,
-            irq: irq_fn(ram),
-            nmi: nmi_fn(ram),
-            ready: true,
-        });
+        irq = irq_fn(ram);
+        nmi = nmi_fn(ram);
 
         if output.sync {
             let pc = output.address;

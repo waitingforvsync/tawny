@@ -313,3 +313,25 @@
 - `src/systems/model_b.rs` — complete rewrite: address decoder, memory, stretch state, glue logic, ROM loading
 - `CLAUDE.md` — architecture updates, clock signal diagram
 - `roms/os12.rom`, `roms/basic2.rom` (new) — ROM binaries from b2 emulator
+
+## 2026-04-14 — Combine phi1/phi2 into single tick; eliminate data_latch
+
+### What we did
+- Combined `phi1()` and `phi2()` into a single `tick(input) -> output` method. Models phi2 falling (interrupt pipeline shift) immediately followed by phi1 rising (micro-op dispatch). The CPU is now a standard single-phase Component.
+- Eliminated `data_latch` field from `Mos6502` struct. The data bus value flows as a `u8` register parameter through `dispatch` into each micro-op function, avoiding a store/load round-trip through the struct pointer on every cycle.
+- Changed `MicroOp` signature from `fn(&mut Mos6502) -> Mos6502Output` to `fn(&mut Mos6502, u8) -> Mos6502Output`.
+- Simplified `set_pc` — no longer takes an opcode parameter. The caller provides the opcode byte via the first `tick()`'s `input.data`.
+- Removed unused `ready` field from `Mos6502Input`.
+- Added `Copy`/`Clone` to `Mos6502Output` (needed by ModelB stretch state).
+- Updated ModelB glue logic: `advance_cpu` replaced with inline stretch state machine in `tick_cpu`, `cpu_bus_data` field carries bus response between ticks.
+- Updated all test harnesses (Dormann, IRQ timing) to use combined tick pattern.
+
+### Performance results
+- Combined tick + `data_latch` field: ~286 MHz
+- Combined tick + `data` parameter (no `data_latch`): ~300 MHz (+5%)
+- Removing `ready` field: ~303 MHz (within noise)
+
+### Design decisions
+- **phi2 falling ≈ phi1 rising** — on the real 6502 these are essentially simultaneous (non-overlapping clocks with a tiny dead zone). Combining them into one atomic tick eliminates the artificial split.
+- **Data as register parameter** — same principle as the earlier refactoring that removed addr_bus/data_out/rw fields. Across a function pointer boundary, the compiler can't optimise away the store-to-self/load-from-self round trip. Passing data in a register avoids this entirely.
+- **set_pc simplification** — with the combined tick, the first `tick()` call naturally provides the opcode byte via `input.data`. No need to pre-load `data_latch`.

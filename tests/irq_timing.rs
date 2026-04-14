@@ -58,30 +58,30 @@ fn build_ram() -> [u8; 65536] {
 fn run_with_irq(irq_start: u64, irq_end: u64, total_cycles: u64) -> Vec<(u64, u16)> {
     let mut ram = build_ram();
     let mut cpu = Mos6502::new();
-    cpu.set_pc(0x0000, ram[0x0000]);
+    cpu.set_pc(0x0000);
 
     let mut syncs = Vec::new();
+    let mut bus_data = ram[0x0000];
+    let mut irq = false;
 
     for cycle in 0..total_cycles {
-        let output = cpu.phi1();
+        let output = cpu.tick(&Mos6502Input {
+            data: bus_data,
+            irq,
+            nmi: false,
+        });
         let addr = output.address as usize;
-        let data = if output.rw {
+        bus_data = if output.rw {
             ram[addr]
         } else {
             ram[addr] = output.data;
             output.data
         };
+        irq = cycle >= irq_start && cycle <= irq_end;
 
         if output.sync {
             syncs.push((cycle, output.address));
         }
-
-        cpu.phi2(&Mos6502Input {
-            data,
-            irq: cycle >= irq_start && cycle <= irq_end,
-            nmi: false,
-            ready: true,
-        });
     }
 
     syncs
@@ -180,22 +180,23 @@ fn build_branch_ram() -> [u8; 65536] {
 fn run_branch_with_irq(irq_start: u64, irq_end: u64, total: u64) -> Vec<(u64, u16)> {
     let mut ram = build_branch_ram();
     let mut cpu = Mos6502::new();
-    cpu.set_pc(0x00F3, ram[0x00F3]);
+    cpu.set_pc(0x00F3);
 
     let mut syncs = Vec::new();
+    let mut bus_data = ram[0x00F3];
+    let mut irq = false;
     for cycle in 0..total {
-        let output = cpu.phi1();
+        let output = cpu.tick(&Mos6502Input {
+            data: bus_data,
+            irq,
+            nmi: false,
+        });
         let addr = output.address as usize;
-        let data = if output.rw { ram[addr] } else { ram[addr] = output.data; output.data };
+        bus_data = if output.rw { ram[addr] } else { ram[addr] = output.data; output.data };
+        irq = cycle >= irq_start && cycle <= irq_end;
         if output.sync {
             syncs.push((cycle, output.address));
         }
-        cpu.phi2(&Mos6502Input {
-            data,
-            irq: cycle >= irq_start && cycle <= irq_end,
-            nmi: false,
-            ready: true,
-        });
     }
     syncs
 }
